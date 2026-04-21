@@ -1,26 +1,45 @@
-from typing import Iterable
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable, Protocol
 
 from pygame.math import Vector2
 
-from .body import Body
 
+class CircularBody(Protocol):
+    """Small interface that any circular physics body must provide."""
 
+    position: Vector2
+    velocity: Vector2
+    radius: float
+    restitution: float
+    friction: float
+
+    @property
+    def inv_mass(self) -> float:
+        ...
+
+@dataclass(frozen=True, slots=True)
 class Bounds:
     """Axis-aligned rectangle that keeps circular bodies inside the world."""
 
-    def __init__(
-        self,
-        min_x: float = 0.0,
-        min_y: float = 0.0,
-        max_x: float = 800.0,
-        max_y: float = 600.0,
-    ) -> None:
-        self.min_x = min_x
-        self.min_y = min_y
-        self.max_x = max_x
-        self.max_y = max_y
+    min_x: float = 0.0
+    min_y: float = 0.0
+    max_x: float = 800.0
+    max_y: float = 600.0
+
+    @classmethod
+    def from_size(
+        cls,
+        width: float,
+        height: float,
+        origin: tuple[float, float] = (0.0, 0.0),
+    ) -> Bounds:
+        min_x, min_y = origin
+        return cls(min_x=min_x, min_y=min_y, max_x=min_x + width, max_y=min_y + height)
 
 
+@dataclass(frozen=True, slots=True)
 class CollisionManifold:
     """Details about a circle overlap.
 
@@ -28,14 +47,13 @@ class CollisionManifold:
     penetration is how far the two circles overlap.
     """
 
-    def __init__(self, normal: Vector2, penetration: float) -> None:
-        self.normal = normal
-        self.penetration = penetration
+    normal: Vector2
+    penetration: float
 
 
 def detect_circle_collision(
-    body_a: Body,
-    body_b: Body,
+    body_a: CircularBody,
+    body_b: CircularBody,
 ) -> CollisionManifold | None:
     """Return collision details when two circles overlap."""
 
@@ -58,8 +76,8 @@ def detect_circle_collision(
 
 
 def resolve_circle_collision(
-    body_a: Body,
-    body_b: Body,
+    body_a: CircularBody,
+    body_b: CircularBody,
     restitution: float | None = None,
     friction: float | None = None,
     positional_correction: float = 1.0,
@@ -102,7 +120,7 @@ def resolve_circle_collision(
 
 
 def resolve_all_circle_collisions(
-    bodies: Iterable[Body],
+    bodies: Iterable[CircularBody],
     restitution: float | None = None,
     friction: float | None = None,
     positional_correction: float = 1.0,
@@ -127,7 +145,7 @@ def resolve_all_circle_collisions(
 
 
 def resolve_bounds_collision(
-    body: Body,
+    body: CircularBody,
     bounds: Bounds,
     dt: float = 0.0,
     restitution: float | None = None,
@@ -135,7 +153,7 @@ def resolve_bounds_collision(
 ) -> set[str]:
     """Keep a circle inside the bounds and return the walls it touched."""
 
-    if body.get_inv_mass() == 0.0:
+    if body.inv_mass == 0.0:
         return set()
 
     contacts: set[str] = set()
@@ -165,32 +183,28 @@ def resolve_bounds_collision(
     return contacts
 
 
-def _combined_inverse_mass(body_a: Body, body_b: Body) -> float:
-    return body_a.get_inv_mass() + body_b.get_inv_mass()
+def _combined_inverse_mass(body_a: CircularBody, body_b: CircularBody) -> float:
+    return body_a.inv_mass + body_b.inv_mass
 
 
 def _separate_bodies(
-    body_a: Body,
-    body_b: Body,
+    body_a: CircularBody,
+    body_b: CircularBody,
     manifold: CollisionManifold,
     positional_correction: float,
 ) -> None:
-    body_a_inverse_mass = body_a.get_inv_mass()
-    body_b_inverse_mass = body_b.get_inv_mass()
-    inv_mass_sum = body_a_inverse_mass + body_b_inverse_mass
+    inv_mass_sum = body_a.inv_mass + body_b.inv_mass
     if inv_mass_sum == 0.0:
         return
 
-    correction = manifold.normal * (
-        manifold.penetration * positional_correction / inv_mass_sum
-    )
-    body_a.position -= correction * body_a_inverse_mass
-    body_b.position += correction * body_b_inverse_mass
+    correction = manifold.normal * (manifold.penetration * positional_correction / inv_mass_sum)
+    body_a.position -= correction * body_a.inv_mass
+    body_b.position += correction * body_b.inv_mass
 
 
 def _apply_bounce_impulse(
-    body_a: Body,
-    body_b: Body,
+    body_a: CircularBody,
+    body_b: CircularBody,
     manifold: CollisionManifold,
     inv_mass_sum: float,
     restitution: float | None,
@@ -210,8 +224,8 @@ def _apply_bounce_impulse(
 
 
 def _apply_friction_impulse(
-    body_a: Body,
-    body_b: Body,
+    body_a: CircularBody,
+    body_b: CircularBody,
     manifold: CollisionManifold,
     inv_mass_sum: float,
     normal_impulse: float,
@@ -233,23 +247,19 @@ def _apply_friction_impulse(
     tangent_direction = tangent_velocity.normalize()
     friction_impulse = -relative_velocity.dot(tangent_direction) / inv_mass_sum
     max_friction_impulse = abs(normal_impulse) * friction_amount
-    friction_impulse = _clamp(
-        friction_impulse,
-        -max_friction_impulse,
-        max_friction_impulse,
-    )
+    friction_impulse = _clamp(friction_impulse, -max_friction_impulse, max_friction_impulse)
 
     _apply_impulse(body_a, body_b, tangent_direction * friction_impulse)
 
 
-def _apply_impulse(body_a: Body, body_b: Body, impulse: Vector2) -> None:
-    body_a.velocity -= impulse * body_a.get_inv_mass()
-    body_b.velocity += impulse * body_b.get_inv_mass()
+def _apply_impulse(body_a: CircularBody, body_b: CircularBody, impulse: Vector2) -> None:
+    body_a.velocity -= impulse * body_a.inv_mass
+    body_b.velocity += impulse * body_b.inv_mass
 
 
 def _collision_restitution(
-    body_a: Body,
-    body_b: Body,
+    body_a: CircularBody,
+    body_b: CircularBody,
     override: float | None,
 ) -> float:
     if override is not None:
@@ -258,8 +268,8 @@ def _collision_restitution(
 
 
 def _collision_friction(
-    body_a: Body,
-    body_b: Body,
+    body_a: CircularBody,
+    body_b: CircularBody,
     override: float | None,
 ) -> float:
     if override is not None:
@@ -267,7 +277,7 @@ def _collision_friction(
     return (body_a.friction + body_b.friction) * 0.5
 
 
-def _apply_floor_friction(body: Body, surface_friction: float, dt: float) -> None:
+def _apply_floor_friction(body: CircularBody, surface_friction: float, dt: float) -> None:
     if surface_friction <= 0.0 or dt <= 0.0 or body.velocity.x == 0.0:
         return
 
