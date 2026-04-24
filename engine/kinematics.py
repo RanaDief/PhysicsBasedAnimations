@@ -37,6 +37,47 @@ class ForwardKinematicsChain:
 
         return transforms
 
+    def points(self, angles: list[float]) -> list[tuple[float, float]]:
+        transforms = self.solve(angles)
+        return [self.base] + [transform_position(transform) for transform in transforms]
+
+
+class CCDInverseKinematicsSolver:
+    """Cyclic coordinate descent solver for a planar kinematic chain."""
+
+    def __init__(self, chain: ForwardKinematicsChain, iterations: int = 10) -> None:
+        self.chain = chain
+        self.iterations = iterations
+
+    def solve(
+        self,
+        angles: list[float],
+        target: tuple[float, float],
+    ) -> list[float]:
+        if len(angles) != len(self.chain.link_lengths):
+            raise ValueError("Each link needs one angle.")
+
+        solved_angles = angles.copy()
+        target_vector = np.array(target)
+
+        for _ in range(self.iterations):
+            for index in reversed(range(len(solved_angles))):
+                points = self.chain.points(solved_angles)
+                joint = np.array(points[index])
+                end = np.array(points[-1])
+
+                end_vector = end - joint
+                target_direction = target_vector - joint
+
+                if np.linalg.norm(end_vector) == 0.0 or np.linalg.norm(target_direction) == 0.0:
+                    continue
+
+                end_angle = math.atan2(end_vector[1], end_vector[0])
+                target_angle = math.atan2(target_direction[1], target_direction[0])
+                solved_angles[index] += target_angle - end_angle
+
+        return solved_angles
+
 
 def transform_position(transform: np.ndarray) -> tuple[float, float]:
     return float(transform[0, 2]), float(transform[1, 2])
