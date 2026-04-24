@@ -7,13 +7,19 @@ from .collision import (
     resolve_bounds_collision,
     resolve_circle_collision,
 )
-from .kinematics import ForwardKinematicsChain, model_matrix, transform_position
+from .kinematics import (
+    CCDInverseKinematicsSolver,
+    ForwardKinematicsChain,
+    model_matrix,
+    transform_position,
+)
 from .particle import Particle, SoftBody
 from .spring import Spring
 
 __all__ = [
     "Body",
     "Bounds",
+    "CCDInverseKinematicsSolver",
     "CollisionManifold",
     "ForwardKinematicsChain",
     "Particle",
