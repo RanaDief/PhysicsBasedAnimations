@@ -1,4 +1,7 @@
 import math
+import random
+from dataclasses import dataclass
+from typing import Callable
 
 import pygame
 from pygame.math import Vector2
@@ -17,6 +20,133 @@ DEFAULT_SPRING_DAMPING = 0.3
 DEFAULT_PRESSURE = 0.1
 DEFAULT_SOFT_BODY_RADIUS = 50.0
 MIN_AREA = 1e-9
+ColorLike = pygame.Color | str | tuple[int, int, int] | tuple[int, int, int, int]
+Range = tuple[float, float]
+VectorRange = tuple[VectorLike, VectorLike]
+
+
+@dataclass
+class VisualParticle:
+    """Lightweight render particle owned by a ParticleEmitter."""
+
+    position: Vector2
+    velocity: Vector2
+    acceleration: Vector2
+    radius: float
+    color: ColorLike
+    lifetime: float
+    age: float = 0.0
+
+    @property
+    def alive(self) -> bool:
+        return self.age < self.lifetime
+
+    def update(self, dt: float) -> None:
+        self.velocity += self.acceleration * dt
+        self.position += self.velocity * dt
+        self.age += dt
+
+    def draw(self, surface) -> None:
+        pygame.draw.circle(surface, _to_color(self.color), self.position, self.radius)
+
+
+class ParticleEmitter:
+    """Configurable visual particle system for effects such as rain, sparks, or dust."""
+
+    def __init__(
+        self,
+        spawn_area: pygame.Rect | tuple[float, float, float, float],
+        particle_count: int,
+        velocity_range: VectorRange,
+        acceleration: VectorLike = (0.0, 0.0),
+        radius_range: Range = (2.0, 5.0),
+        lifetime_range: Range = (1.0, 3.0),
+        color: ColorLike | Callable[[random.Random], ColorLike] = "white",
+        bounds: pygame.Rect | tuple[float, float, float, float] | None = None,
+        loop: bool = True,
+        seed: int | None = None,
+    ) -> None:
+        if particle_count < 0:
+            raise ValueError("Particle count cannot be negative.")
+        _validate_range(radius_range, "Particle radius range")
+        _validate_range(lifetime_range, "Particle lifetime range")
+
+        self.spawn_area = pygame.Rect(spawn_area)
+        self.particle_count = particle_count
+        self.velocity_range = velocity_range
+        self.acceleration = Vector2(acceleration)
+        self.radius_range = radius_range
+        self.lifetime_range = lifetime_range
+        self.color = color
+        self.bounds = pygame.Rect(bounds) if bounds is not None else None
+        self.loop = loop
+        self.random = random.Random(seed)
+        self.particles: list[VisualParticle] = [
+            self._create_particle(randomize_age=True) for _ in range(particle_count)
+        ]
+
+    def update(self, dt: float) -> None:
+        for index, particle in enumerate(self.particles):
+            particle.update(dt)
+            if self._should_respawn(particle):
+                if self.loop:
+                    self.particles[index] = self._create_particle()
+                else:
+                    particle.age = particle.lifetime
+
+    def draw(self, surface) -> None:
+        for particle in self.particles:
+            if particle.alive:
+                particle.draw(surface)
+
+    def emit(self, count: int) -> None:
+        """Add a burst of particles without changing the steady emitter count."""
+        if count < 0:
+            raise ValueError("Emit count cannot be negative.")
+
+        self.particles.extend(self._create_particle() for _ in range(count))
+
+    def clear_dead(self) -> None:
+        self.particles = [particle for particle in self.particles if particle.alive]
+
+    def _create_particle(self, randomize_age: bool = False) -> VisualParticle:
+        lifetime = self.random.uniform(*self.lifetime_range)
+        age = self.random.uniform(0.0, lifetime) if randomize_age else 0.0
+        return VisualParticle(
+            position=self._random_position(),
+            velocity=self._random_vector(self.velocity_range),
+            acceleration=Vector2(self.acceleration),
+            radius=self.random.uniform(*self.radius_range),
+            color=self._random_color(),
+            lifetime=lifetime,
+            age=age,
+        )
+
+    def _random_position(self) -> Vector2:
+        return Vector2(
+            self.random.uniform(self.spawn_area.left, self.spawn_area.right),
+            self.random.uniform(self.spawn_area.top, self.spawn_area.bottom),
+        )
+
+    def _random_vector(self, vector_range: VectorRange) -> Vector2:
+        min_vector = Vector2(vector_range[0])
+        max_vector = Vector2(vector_range[1])
+        return Vector2(
+            self.random.uniform(min_vector.x, max_vector.x),
+            self.random.uniform(min_vector.y, max_vector.y),
+        )
+
+    def _random_color(self) -> ColorLike:
+        if callable(self.color):
+            return self.color(self.random)
+        return self.color
+
+    def _should_respawn(self, particle: VisualParticle) -> bool:
+        if not particle.alive:
+            return True
+        if self.bounds is None:
+            return False
+        return not self.bounds.collidepoint(particle.position)
 
 
 class Particle:
@@ -199,6 +329,11 @@ def _to_color(color):
     if isinstance(color, str):
         return pygame.Color(color)
     return color
+
+
+def _validate_range(value_range: Range, label: str) -> None:
+    if value_range[0] > value_range[1]:
+        raise ValueError(f"{label} minimum cannot be greater than maximum.")
 
 
 def _to_gravity_vector(gravity: VectorLike | float) -> Vector2:

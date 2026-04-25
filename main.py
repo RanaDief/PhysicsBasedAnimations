@@ -1,6 +1,12 @@
 import pygame
 
-from engine import Bounds, CCDInverseKinematicsSolver, ForwardKinematicsChain, SoftBody
+from engine import (
+    Bounds,
+    CCDInverseKinematicsSolver,
+    ForwardKinematicsChain,
+    ParticleEmitter,
+    SoftBody,
+)
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
@@ -24,6 +30,8 @@ SOFT_BODY_DT = 0.5
 SOFT_BODY_FILL = (244, 132, 132)
 SOFT_BODY_PARTICLE = (180, 36, 36)
 SOFT_BODY_SPRING = (235, 238, 245)
+RAIN_PARTICLE_COLOR = (0, 150, 170)
+RAIN_PARTICLE_COUNT = 100
 BALL_BOUNCINESS = 0.9
 BALL_PRESSURE = 0.1
 BALL_SPRING_STIFFNESS = 0.1
@@ -55,9 +63,21 @@ def main() -> None:
         pressure=BALL_PRESSURE,
         restitution=BALL_BOUNCINESS,
     )
+    particle_system = ParticleEmitter(
+        spawn_area=(0, -20, SCREEN_WIDTH, SCREEN_HEIGHT + 20),
+        particle_count=RAIN_PARTICLE_COUNT,
+        velocity_range=((0.0, 120.0), (0.0, 360.0)),
+        acceleration=(0.0, 40.0),
+        radius_range=(3.0, 6.0),
+        lifetime_range=(1.0, 5.0),
+        color=RAIN_PARTICLE_COLOR,
+        bounds=(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT),
+        loop=True,
+    )
 
     running = True
     while running:
+        dt = clock.tick(FPS) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -80,9 +100,11 @@ def main() -> None:
         ik_angles = ik_solver.solve(ik_angles, tuple(ik_target))
         ik_points = ik_chain.points(ik_angles)
 
+        particle_system.update(dt)
         soft_body.update(SOFT_BODY_DT, gravity=SOFT_BODY_GRAVITY, bounds=soft_body_bounds)
 
         screen.fill(BACKGROUND_COLOR)
+        particle_system.draw(screen)
         pygame.draw.line(
             screen,
             PANEL_LINE_COLOR,
@@ -107,7 +129,6 @@ def main() -> None:
         )
 
         pygame.display.flip()
-        clock.tick(FPS)
 
     pygame.quit()
 
