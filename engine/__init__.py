@@ -13,7 +13,7 @@ from .kinematics import (
     model_matrix,
     transform_position,
 )
-from .particle import Particle, SoftBody
+from .particle import Particle, ParticleEmitter, SoftBody, VisualParticle
 from .spring import Spring
 
 __all__ = [
@@ -23,9 +23,11 @@ __all__ = [
     "CollisionManifold",
     "ForwardKinematicsChain",
     "Particle",
+    "ParticleEmitter",
     "SoftBody",
     "Spring",
     "VectorLike",
+    "VisualParticle",
     "detect_circle_collision",
     "model_matrix",
     "resolve_all_circle_collisions",
