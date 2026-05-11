@@ -2,6 +2,8 @@ import math
 
 from pygame.math import Vector2
 
+from .integrator import integrate_forces
+
 VectorLike = Vector2 | tuple[float, float] | list[float]
 
 
@@ -44,6 +46,10 @@ class Body:
             return 0.0
         return 1.0 / self.mass
 
+    @property
+    def inv_mass(self) -> float:
+        return self.get_inv_mass()
+
     def apply_force(self, force: VectorLike) -> None:
         if self.get_inv_mass() == 0.0:
             return
@@ -57,9 +63,13 @@ class Body:
         if inverse_mass == 0.0:
             return
 
-        total_acceleration = self.acceleration + Vector2(gravity)
-        total_acceleration += self.force * inverse_mass
-
-        self.velocity += total_acceleration * dt
-        self.position += self.velocity * dt
+        integrate_forces(
+            self.position,
+            self.velocity,
+            self.force,
+            inverse_mass,
+            dt,
+            acceleration=self.acceleration,
+            gravity=gravity,
+        )
         self.clear_forces()
