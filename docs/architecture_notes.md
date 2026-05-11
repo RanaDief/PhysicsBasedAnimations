@@ -69,8 +69,32 @@ The `engine` package exposes its public API through `engine/__init__.py`. This
 lets the application import the implemented physics features from one place:
 
 ```python
-from engine import Body, Bounds, ParticleEmitter, SoftBody
+from engine import Body, Bounds, ParticleEmitter, SoftBody, World
 ```
+
+### World Module
+
+File: `engine/world.py`
+
+`World` owns the active simulation objects and advances them in a consistent
+order. It currently manages:
+
+- rigid circular bodies
+- soft bodies
+- visual particle emitters
+- global gravity
+- world bounds
+- floor friction
+- collision iteration count
+- positional correction strength
+
+The application layer registers objects with the world, then calls
+`world.update(dt)` once per frame. Rendering remains outside the world so the
+engine can focus on simulation state.
+
+Soft bodies can override the world's gravity, bounds, and timestep. This keeps
+the current demo behavior intact while still moving update orchestration out of
+`main.py`.
 
 ### Rigid Body Module
 
@@ -278,7 +302,6 @@ The current engine uses:
 
 The following engine files exist but are currently empty:
 
-- `engine/world.py`
 - `engine/integrator.py`
 - `engine/forces.py`
 - `engine/constraint.py`
@@ -286,7 +309,6 @@ The following engine files exist but are currently empty:
 
 Possible responsibilities:
 
-- `world.py`: own all simulation objects and step them in a consistent order.
 - `integrator.py`: hold explicit Euler, semi-implicit Euler, or Verlet
   integration functions.
 - `forces.py`: define reusable gravity, drag, wind, and spring force helpers.
@@ -310,11 +332,11 @@ systems. Until then, keeping the implementation direct is simpler.
 
 ## Recommended Next Architecture Step
 
-The most useful next step is to introduce a small `World` class after the demo
-logic grows. It could own lists of rigid bodies, soft bodies, and emitters, then
-provide a single `update(dt)` method. That would move simulation orchestration
-out of `main.py` while keeping rendering and input in the application layer.
+The most useful next step is to introduce a fixed physics timestep. The current
+demo passes frame `dt` into the world, while the soft body still uses its own
+fixed demo timestep. A shared fixed-step update would make rigid body collision,
+particles, and soft body behavior more stable across machines.
 
 Until gameplay systems are implemented, `main.py` is a reasonable place to keep
-the showcase wiring because it makes the physics modules easy to inspect and
-present.
+input and rendering because it makes the physics modules easy to inspect and
+present. Simulation orchestration now belongs to `World`.

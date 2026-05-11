@@ -15,6 +15,7 @@ from .kinematics import (
 )
 from .particle import Particle, ParticleEmitter, SoftBody, VisualParticle
 from .spring import Spring
+from .world import SoftBodySimulation, World
 
 __all__ = [
     "Body",
@@ -26,8 +27,10 @@ __all__ = [
     "ParticleEmitter",
     "SoftBody",
     "Spring",
+    "SoftBodySimulation",
     "VectorLike",
     "VisualParticle",
+    "World",
     "detect_circle_collision",
     "model_matrix",
     "resolve_all_circle_collisions",

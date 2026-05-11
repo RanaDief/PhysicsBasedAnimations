@@ -1,11 +1,13 @@
 import pygame
 
 from engine import (
+    Body,
     Bounds,
     CCDInverseKinematicsSolver,
     ForwardKinematicsChain,
     ParticleEmitter,
     SoftBody,
+    World,
 )
 
 SCREEN_WIDTH = 800
@@ -30,6 +32,11 @@ SOFT_BODY_DT = 0.5
 SOFT_BODY_FILL = (244, 132, 132)
 SOFT_BODY_PARTICLE = (180, 36, 36)
 SOFT_BODY_SPRING = (235, 238, 245)
+RIGID_BODY_COLORS = [(255, 192, 74), (96, 208, 255), (132, 236, 128)]
+RIGID_BODY_STATIC_COLOR = (100, 108, 122)
+RIGID_BODY_OUTLINE = (245, 248, 255)
+RIGID_BODY_GRAVITY = (0.0, 900.0)
+RIGID_BODY_FRICTION = 420.0
 RAIN_PARTICLE_COLOR = (0, 150, 170)
 RAIN_PARTICLE_COUNT = 100
 BALL_BOUNCINESS = 0.9
@@ -41,7 +48,7 @@ BALL_SPRING_DAMPING = 0.3
 def main() -> None:
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Soft Body + Forward/Inverse Kinematics")
+    pygame.display.set_caption("Soft Body")
     clock = pygame.time.Clock()
 
     fk_base = (SCREEN_WIDTH * 0.25, SCREEN_HEIGHT * 0.25)
@@ -52,9 +59,17 @@ def main() -> None:
     ik_angles = [0.5, 0.5]
     ik_target = [SCREEN_WIDTH * 0.78, SCREEN_HEIGHT * 0.25]
 
-    soft_body_bounds = Bounds(0, SCREEN_HEIGHT * 0.5, SCREEN_WIDTH, SCREEN_HEIGHT)
+    rigid_body_bounds = Bounds(0, SCREEN_HEIGHT * 0.5, SCREEN_WIDTH * 0.5, SCREEN_HEIGHT)
+    rigid_bodies = [
+        Body((95, 340), velocity=(180, 20), radius=22, restitution=0.85, friction=0.0),
+        Body((185, 330), velocity=(-120, 0), radius=28, restitution=0.8, friction=0.0),
+        Body((305, 350), velocity=(-80, -30), radius=18, restitution=0.9, friction=0.0),
+        Body((205, 540), radius=36, restitution=0.7, is_static=True),
+    ]
+
+    soft_body_bounds = Bounds(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
     soft_body = SoftBody(
-        center=(SCREEN_WIDTH * 0.5, SCREEN_HEIGHT * 0.72),
+        center=(SCREEN_WIDTH * 0.5, SCREEN_HEIGHT * 0.45),
         particle_count=8,
         radius=50,
         particle_radius=4,
@@ -74,6 +89,21 @@ def main() -> None:
         bounds=(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT),
         loop=True,
     )
+    world = World(
+        bounds=rigid_body_bounds,
+        gravity=RIGID_BODY_GRAVITY,
+        floor_friction=RIGID_BODY_FRICTION,
+        collision_iterations=2,
+        positional_correction=0.8,
+    )
+    world.add_bodies(rigid_bodies)
+    world.add_soft_body(
+        soft_body,
+        gravity=SOFT_BODY_GRAVITY,
+        bounds=soft_body_bounds,
+        time_step=SOFT_BODY_DT,
+    )
+    world.add_emitter(particle_system)
 
     running = True
     while running:
@@ -100,8 +130,7 @@ def main() -> None:
         ik_angles = ik_solver.solve(ik_angles, tuple(ik_target))
         ik_points = ik_chain.points(ik_angles)
 
-        particle_system.update(dt)
-        soft_body.update(SOFT_BODY_DT, gravity=SOFT_BODY_GRAVITY, bounds=soft_body_bounds)
+        world.update(dt)
 
         screen.fill(BACKGROUND_COLOR)
         particle_system.draw(screen)
@@ -116,11 +145,12 @@ def main() -> None:
             screen,
             PANEL_LINE_COLOR,
             (SCREEN_WIDTH * 0.5, 0),
-            (SCREEN_WIDTH * 0.5, SCREEN_HEIGHT * 0.5),
+            (SCREEN_WIDTH * 0.5, SCREEN_HEIGHT),
             2,
         )
         _draw_forward_kinematics(screen, fk_points)
         _draw_inverse_kinematics(screen, ik_points, ik_target)
+        _draw_rigid_bodies(screen, rigid_bodies)
         soft_body.draw(
             screen,
             particle_color=SOFT_BODY_PARTICLE,
@@ -160,6 +190,17 @@ def _draw_inverse_kinematics(
         10,
     )
     pygame.draw.circle(surface, IK_TARGET_COLOR, (int(target[0]), int(target[1])), 6)
+
+
+def _draw_rigid_bodies(surface, bodies: list[Body]) -> None:
+    for index, body in enumerate(bodies):
+        if body.inv_mass == 0.0:
+            color = RIGID_BODY_STATIC_COLOR
+        else:
+            color = RIGID_BODY_COLORS[index % len(RIGID_BODY_COLORS)]
+
+        pygame.draw.circle(surface, color, body.position, body.radius)
+        pygame.draw.circle(surface, RIGID_BODY_OUTLINE, body.position, body.radius, 2)
 
 
 if __name__ == "__main__":
