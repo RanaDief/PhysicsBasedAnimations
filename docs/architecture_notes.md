@@ -96,6 +96,24 @@ Soft bodies can override the world's gravity, bounds, and timestep. This keeps
 the current demo behavior intact while still moving update orchestration out of
 `main.py`.
 
+### Integrator Module
+
+File: `engine/integrator.py`
+
+The integrator module centralizes motion update functions shared by rigid
+bodies, physical particles, and visual particles.
+
+The current integration method is semi-implicit Euler:
+
+```text
+velocity += acceleration * dt
+position += velocity * dt
+```
+
+`integrate_forces()` converts accumulated force into acceleration using inverse
+mass, adds optional object acceleration and gravity, then applies the shared
+semi-implicit Euler step.
+
 ### Rigid Body Module
 
 File: `engine/body.py`
@@ -112,7 +130,7 @@ File: `engine/body.py`
 - accumulated force
 - static/dynamic state
 
-Dynamic bodies integrate motion using a simple explicit Euler style update:
+Dynamic bodies integrate motion through `engine/integrator.py`:
 
 ```text
 velocity += acceleration * dt
@@ -302,15 +320,12 @@ The current engine uses:
 
 The following engine files exist but are currently empty:
 
-- `engine/integrator.py`
 - `engine/forces.py`
 - `engine/constraint.py`
 - `engine/vector.py`
 
 Possible responsibilities:
 
-- `integrator.py`: hold explicit Euler, semi-implicit Euler, or Verlet
-  integration functions.
 - `forces.py`: define reusable gravity, drag, wind, and spring force helpers.
 - `constraint.py`: implement distance constraints, pin constraints, and PBD
   solvers.

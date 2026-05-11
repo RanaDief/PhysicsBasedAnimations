@@ -8,6 +8,7 @@ from pygame.math import Vector2
 
 from .body import VectorLike
 from .collision import Bounds
+from .integrator import integrate_forces, integrate_semi_implicit_euler
 from .spring import Spring
 
 DEFAULT_GRAVITY = 0.5
@@ -42,8 +43,12 @@ class VisualParticle:
         return self.age < self.lifetime
 
     def update(self, dt: float) -> None:
-        self.velocity += self.acceleration * dt
-        self.position += self.velocity * dt
+        integrate_semi_implicit_euler(
+            self.position,
+            self.velocity,
+            self.acceleration,
+            dt,
+        )
         self.age += dt
 
     def draw(self, surface) -> None:
@@ -185,9 +190,14 @@ class Particle:
         gravity: VectorLike | float = DEFAULT_GRAVITY,
         bounds: Bounds | None = None,
     ) -> set[str]:
-        acceleration = _to_gravity_vector(gravity) + self.force / self.mass
-        self.velocity += acceleration * dt
-        self.position += self.velocity * dt
+        integrate_forces(
+            self.position,
+            self.velocity,
+            self.force,
+            self.get_inv_mass(),
+            dt,
+            gravity=gravity,
+        )
         self.clear_forces()
 
         if bounds is None:
@@ -334,9 +344,3 @@ def _to_color(color):
 def _validate_range(value_range: Range, label: str) -> None:
     if value_range[0] > value_range[1]:
         raise ValueError(f"{label} minimum cannot be greater than maximum.")
-
-
-def _to_gravity_vector(gravity: VectorLike | float) -> Vector2:
-    if isinstance(gravity, (int, float)):
-        return Vector2(0.0, gravity)
-    return Vector2(gravity)
