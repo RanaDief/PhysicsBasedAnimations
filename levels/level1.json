@@ -1,0 +1,100 @@
+{
+  "id": "level-1",
+  "name": "Basic Physics Room",
+  "bounds": {
+    "width": 800,
+    "height": 600
+  },
+  "gravity": [0.0, 900.0],
+  "metadata": {
+    "objective": "Push the crate onto the floor switch to open the gate, then deliver the Power Core to the reactor.",
+    "physics_focus": [
+      "rigid body motion",
+      "circle collision response",
+      "floor friction",
+      "activation particle effect"
+    ],
+    "par_time_seconds": 45
+  },
+  "player": {
+    "position": [90.0, 500.0],
+    "radius": 18.0,
+    "mass": 18.0,
+    "restitution": 0.35,
+    "friction": 0.12
+  },
+  "goal": {
+    "position": [735.0, 500.0],
+    "radius": 28.0
+  },
+  "platforms": [
+    {
+      "id": "floor",
+      "position": [400.0, 575.0],
+      "size": [800.0, 50.0],
+      "kind": "static"
+    },
+    {
+      "id": "left-wall",
+      "position": [10.0, 300.0],
+      "size": [20.0, 600.0],
+      "kind": "static"
+    },
+    {
+      "id": "ceiling",
+      "position": [400.0, 10.0],
+      "size": [800.0, 20.0],
+      "kind": "static"
+    },
+    {
+      "id": "training-step",
+      "position": [245.0, 505.0],
+      "size": [120.0, 28.0],
+      "kind": "static"
+    },
+    {
+      "id": "switch-deck",
+      "position": [470.0, 545.0],
+      "size": [170.0, 20.0],
+      "kind": "static"
+    }
+  ],
+  "rigid_bodies": [
+    {
+      "id": "switch-crate",
+      "position": [305.0, 505.0],
+      "radius": 24.0,
+      "mass": 42.0,
+      "restitution": 0.15,
+      "friction": 0.65
+    }
+  ],
+  "switches": [
+    {
+      "id": "gate-switch",
+      "position": [470.0, 526.0],
+      "size": [72.0, 12.0],
+      "activates": "exit-gate",
+      "required_body": "switch-crate"
+    }
+  ],
+  "gates": [
+    {
+      "id": "exit-gate",
+      "position": [650.0, 495.0],
+      "size": [26.0, 130.0],
+      "closed": true
+    }
+  ],
+  "particle_effects": [
+    {
+      "id": "switch-sparks",
+      "trigger": "gate-switch.activated",
+      "position": [470.0, 515.0],
+      "color": [0, 220, 255],
+      "count": 32,
+      "lifetime": [0.25, 0.75],
+      "velocity": [[-90.0, -220.0], [90.0, -70.0]]
+    }
+  ]
+}
