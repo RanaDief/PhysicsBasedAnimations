@@ -178,6 +178,10 @@ class Particle:
     def get_inv_mass(self) -> float:
         return 1.0 / self.mass
 
+    @property
+    def inv_mass(self) -> float:
+        return self.get_inv_mass()
+
     def apply_force(self, force: VectorLike) -> None:
         self.force += Vector2(force)
 

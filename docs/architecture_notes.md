@@ -114,6 +114,45 @@ position += velocity * dt
 mass, adds optional object acceleration and gravity, then applies the shared
 semi-implicit Euler step.
 
+### Force Helpers
+
+File: `engine/forces.py`
+
+The force module contains reusable force calculations that can be applied to
+rigid bodies, particles, springs, emitters, or future gameplay systems.
+
+Implemented helpers include:
+
+- `gravity_force()`
+- `drag_force()`
+- `wind_force()`
+- `spring_force()`
+- `damping_force()`
+- `attraction_force()`
+- `repulsion_force()`
+
+These helpers return `Vector2` values. Simulation objects still decide when to
+apply the returned force through their own `apply_force()` method.
+
+### Constraint Module
+
+File: `engine/constraint.py`
+
+The constraint module contains the foundation for position-based dynamics. The
+current implementation works on objects with a `position` and inverse mass.
+
+Implemented constraints include:
+
+- `DistanceConstraint`: keeps two bodies near a rest length.
+- `PinConstraint`: pulls a body toward a fixed target position.
+- `BoundsConstraint`: clamps a body inside a rectangular position range.
+- `solve_constraints()`: iteratively solves a list of constraints.
+- `update_velocity_from_position()`: rebuilds velocity after position
+  corrections.
+
+This module is intended for ropes, chains, pinned particles, and stable
+constraint-based soft-body behavior.
+
 ### Rigid Body Module
 
 File: `engine/body.py`
@@ -145,16 +184,23 @@ ignored by force integration and treated as immovable during collisions.
 
 File: `engine/collision.py`
 
-The collision system currently supports circular bodies and axis-aligned world
-bounds.
+The collision system separates shape overlap detection from collision
+resolution. It currently supports circle-circle, AABB-AABB, circle-AABB, and
+circle-bounds interactions.
 
 Important types and functions:
 
 - `Bounds`: rectangular simulation area.
+- `AABB`: immutable axis-aligned box snapshot.
 - `CollisionManifold`: collision normal and penetration depth.
 - `detect_circle_collision()`: detects circle-circle overlap.
+- `detect_aabb_collision()`: detects AABB-AABB overlap.
+- `detect_circle_aabb_collision()`: detects circle-AABB overlap.
+- `resolve_collision()`: resolves a known collision manifold.
 - `resolve_circle_collision()`: separates overlapping circles and applies
   impulse response.
+- `resolve_aabb_collision()`: separates overlapping AABB bodies.
+- `resolve_circle_aabb_collision()`: separates an overlapping circle and AABB.
 - `resolve_all_circle_collisions()`: checks every unique body pair.
 - `resolve_bounds_collision()`: keeps a circle inside a rectangle.
 
@@ -320,15 +366,10 @@ The current engine uses:
 
 The following engine files exist but are currently empty:
 
-- `engine/forces.py`
-- `engine/constraint.py`
 - `engine/vector.py`
 
 Possible responsibilities:
 
-- `forces.py`: define reusable gravity, drag, wind, and spring force helpers.
-- `constraint.py`: implement distance constraints, pin constraints, and PBD
-  solvers.
 - `vector.py`: provide project-specific vector helpers if Pygame vectors become
   insufficient.
 
@@ -337,8 +378,9 @@ systems. Until then, keeping the implementation direct is simpler.
 
 ## Current Limitations
 
-- Collision shapes are circles only.
-- Collision detection is brute force over all body pairs.
+- Circle-circle collision detection is still brute force over all body pairs.
+- AABB and circle-AABB support exists, but the current demo only renders circular
+  rigid bodies.
 - Soft body simulation uses a fixed timestep constant in `main.py`.
 - Some modules listed in the project structure are placeholders.
 - Level JSON files are empty.
