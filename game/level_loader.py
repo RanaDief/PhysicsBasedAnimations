@@ -12,6 +12,7 @@ from .level import (
     ParticleEffectSpec,
     PlatformSpec,
     RigidBodySpec,
+    SoftBodySpec,
     SpawnPoint,
     SwitchSpec,
 )
@@ -52,6 +53,7 @@ def level_from_dict(data: dict[str, Any]) -> Level:
         particle_effects=[
             _particle_effect(item) for item in data.get("particle_effects", [])
         ],
+        soft_bodies=[_soft_body(item) for item in data.get("soft_bodies", [])],
         metadata=dict(data.get("metadata", {})),
     )
 
@@ -144,6 +146,41 @@ def _particle_effect(data: dict[str, Any]) -> ParticleEffectSpec:
             _number_pair(data["velocity"][0], f"particle_effect.{data['id']}.velocity[0]"),
             _number_pair(data["velocity"][1], f"particle_effect.{data['id']}.velocity[1]"),
         ),
+    )
+
+
+def _soft_body(data: dict[str, Any]) -> SoftBodySpec:
+    _require_keys(
+        data,
+        "soft_body",
+        [
+            "id",
+            "center",
+            "particle_count",
+            "radius",
+            "particle_radius",
+            "particle_mass",
+            "spring_stiffness",
+            "spring_damping",
+            "pressure",
+            "restitution",
+            "gravity",
+            "time_step",
+        ],
+    )
+    return SoftBodySpec(
+        id=str(data["id"]),
+        center=_number_pair(data["center"], f"soft_body.{data['id']}.center"),
+        particle_count=int(data["particle_count"]),
+        radius=float(data["radius"]),
+        particle_radius=float(data["particle_radius"]),
+        particle_mass=float(data["particle_mass"]),
+        spring_stiffness=float(data["spring_stiffness"]),
+        spring_damping=float(data["spring_damping"]),
+        pressure=float(data["pressure"]),
+        restitution=float(data["restitution"]),
+        gravity=_number_pair(data["gravity"], f"soft_body.{data['id']}.gravity"),
+        time_step=float(data["time_step"]),
     )
 
 

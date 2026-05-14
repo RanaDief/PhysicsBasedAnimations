@@ -76,6 +76,22 @@ class ParticleEffectSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class SoftBodySpec:
+    id: str
+    center: NumberPair
+    particle_count: int
+    radius: float
+    particle_radius: float
+    particle_mass: float
+    spring_stiffness: float
+    spring_damping: float
+    pressure: float
+    restitution: float
+    gravity: NumberPair
+    time_step: float
+
+
+@dataclass(frozen=True, slots=True)
 class Level:
     id: str
     name: str
@@ -88,4 +104,5 @@ class Level:
     switches: list[SwitchSpec] = field(default_factory=list)
     gates: list[GateSpec] = field(default_factory=list)
     particle_effects: list[ParticleEffectSpec] = field(default_factory=list)
+    soft_bodies: list[SoftBodySpec] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

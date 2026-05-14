@@ -1,206 +1,476 @@
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass, field
+
 import pygame
+from pygame.math import Vector2
 
 from engine import (
+    AABB,
     Body,
     Bounds,
-    CCDInverseKinematicsSolver,
-    ForwardKinematicsChain,
     ParticleEmitter,
     SoftBody,
     World,
+    detect_circle_aabb_collision,
+    resolve_collision,
 )
+from game.level import Level, ParticleEffectSpec
+from game.level_loader import load_level
 
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
-FPS = 60
-BACKGROUND_COLOR = (18, 20, 24)
-PANEL_LINE_COLOR = (72, 80, 94)
-FK_BASE_COLOR = (48, 118, 255)
-FK_LINK_1_COLOR = (255, 88, 88)
-FK_LINK_2_COLOR = (84, 220, 120)
-IK_JOINT_COLOR = (0, 200, 255)
-IK_LINK_COLOR = (245, 248, 255)
-IK_END_COLOR = (255, 64, 64)
-IK_TARGET_COLOR = (255, 232, 84)
-BASE_RADIUS = 10
-LINK_WIDTH = 3
-FK_LINK_LENGTHS = [65.0, 100.0]
-IK_LINK_LENGTHS = [150.0, 100.0]
-TARGET_SPEED = 5.0
-SOFT_BODY_GRAVITY = 0.5
-SOFT_BODY_DT = 0.5
-SOFT_BODY_FILL = (244, 132, 132)
-SOFT_BODY_PARTICLE = (180, 36, 36)
-SOFT_BODY_SPRING = (235, 238, 245)
-RIGID_BODY_COLORS = [(255, 192, 74), (96, 208, 255), (132, 236, 128)]
-RIGID_BODY_STATIC_COLOR = (100, 108, 122)
-RIGID_BODY_OUTLINE = (245, 248, 255)
-RIGID_BODY_GRAVITY = (0.0, 900.0)
-RIGID_BODY_FRICTION = 420.0
-RAIN_PARTICLE_COLOR = (0, 150, 170)
-RAIN_PARTICLE_COUNT = 100
-BALL_BOUNCINESS = 0.9
-BALL_PRESSURE = 0.1
-BALL_SPRING_STIFFNESS = 0.1
-BALL_SPRING_DAMPING = 0.3
+FPS = 120
+BACKGROUND_COLOR = (16, 19, 25)
+GRID_COLOR = (28, 34, 45)
+PLATFORM_COLOR = (78, 88, 104)
+PLATFORM_EDGE_COLOR = (130, 146, 170)
+PLAYER_COLOR = (0, 220, 255)
+PLAYER_CORE_COLOR = (226, 250, 255)
+CRATE_COLOR = (245, 176, 64)
+CRATE_EDGE_COLOR = (255, 220, 132)
+SOFT_BODY_FILL = (86, 194, 255)
+SOFT_BODY_PARTICLE = (202, 244, 255)
+SOFT_BODY_SPRING = (44, 112, 170)
+SWITCH_OFF_COLOR = (88, 98, 112)
+SWITCH_ON_COLOR = (0, 220, 150)
+GATE_COLOR = (255, 88, 88)
+GATE_OPEN_COLOR = (70, 88, 92)
+GOAL_COLOR = (126, 255, 117)
+TEXT_COLOR = (226, 234, 245)
+MUTED_TEXT_COLOR = (150, 160, 176)
+PLAYER_MOVE_FORCE = 3200.0
+PLAYER_MAX_SPEED = 260.0
+PLAYER_JUMP_SPEED = 520.0
+AIR_CONTROL = 0.65
+STATIC_FRICTION = 0.18
+SPARK_GRAVITY = (0.0, 520.0)
+
+
+@dataclass(slots=True)
+class StaticBox:
+    position: Vector2
+    half_size: Vector2
+    restitution: float = 0.0
+    friction: float = STATIC_FRICTION
+    velocity: Vector2 = field(default_factory=Vector2)
+
+    @property
+    def inv_mass(self) -> float:
+        return 0.0
+
+
+@dataclass(slots=True)
+class LevelRuntime:
+    level: Level
+    world: World
+    player: Body
+    crates: dict[str, Body]
+    platforms: list[StaticBox]
+    gates: dict[str, StaticBox]
+    gate_closed: dict[str, bool]
+    soft_bodies: list[SoftBody]
+    spark_emitters: list[ParticleEmitter]
+    static_surface: pygame.Surface | None = None
+    hud_surface: pygame.Surface | None = None
+    win_surface: pygame.Surface | None = None
+    switch_active: bool = False
+    won: bool = False
+    grounded: bool = False
 
 
 def main() -> None:
     pygame.init()
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Soft Body")
+    runtime = _create_runtime(load_level(_level_number_from_args()))
+    screen = pygame.display.set_mode(
+        (runtime.level.bounds.width, runtime.level.bounds.height)
+    )
+    pygame.display.set_caption(runtime.level.name)
     clock = pygame.time.Clock()
-
-    fk_base = (SCREEN_WIDTH * 0.25, SCREEN_HEIGHT * 0.25)
-    fk_chain = ForwardKinematicsChain(base=fk_base, link_lengths=FK_LINK_LENGTHS)
-    ik_base = (SCREEN_WIDTH * 0.68, SCREEN_HEIGHT * 0.25)
-    ik_chain = ForwardKinematicsChain(base=ik_base, link_lengths=IK_LINK_LENGTHS)
-    ik_solver = CCDInverseKinematicsSolver(ik_chain, iterations=10)
-    ik_angles = [0.5, 0.5]
-    ik_target = [SCREEN_WIDTH * 0.78, SCREEN_HEIGHT * 0.25]
-
-    rigid_body_bounds = Bounds(0, SCREEN_HEIGHT * 0.5, SCREEN_WIDTH * 0.5, SCREEN_HEIGHT)
-    rigid_bodies = [
-        Body((95, 340), velocity=(180, 20), radius=22, restitution=0.85, friction=0.0),
-        Body((185, 330), velocity=(-120, 0), radius=28, restitution=0.8, friction=0.0),
-        Body((305, 350), velocity=(-80, -30), radius=18, restitution=0.9, friction=0.0),
-        Body((205, 540), radius=36, restitution=0.7, is_static=True),
-    ]
-
-    soft_body_bounds = Bounds(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
-    soft_body = SoftBody(
-        center=(SCREEN_WIDTH * 0.5, SCREEN_HEIGHT * 0.45),
-        particle_count=8,
-        radius=50,
-        particle_radius=4,
-        spring_stiffness=BALL_SPRING_STIFFNESS,
-        spring_damping=BALL_SPRING_DAMPING,
-        pressure=BALL_PRESSURE,
-        restitution=BALL_BOUNCINESS,
-    )
-    particle_system = ParticleEmitter(
-        spawn_area=(0, -20, SCREEN_WIDTH, SCREEN_HEIGHT + 20),
-        particle_count=RAIN_PARTICLE_COUNT,
-        velocity_range=((0.0, 120.0), (0.0, 360.0)),
-        acceleration=(0.0, 40.0),
-        radius_range=(3.0, 6.0),
-        lifetime_range=(1.0, 5.0),
-        color=RAIN_PARTICLE_COLOR,
-        bounds=(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT),
-        loop=True,
-    )
-    world = World(
-        bounds=rigid_body_bounds,
-        gravity=RIGID_BODY_GRAVITY,
-        floor_friction=RIGID_BODY_FRICTION,
-        collision_iterations=2,
-        positional_correction=0.8,
-    )
-    world.add_bodies(rigid_bodies)
-    world.add_soft_body(
-        soft_body,
-        gravity=SOFT_BODY_GRAVITY,
-        bounds=soft_body_bounds,
-        time_step=SOFT_BODY_DT,
-    )
-    world.add_emitter(particle_system)
+    font = pygame.font.Font(None, 28)
+    small_font = pygame.font.Font(None, 22)
+    runtime.static_surface = _build_static_surface(screen, runtime)
+    runtime.hud_surface = _build_hud_surface(screen, runtime, font, small_font)
+    runtime.win_surface = font.render("Power Core delivered", True, GOAL_COLOR)
 
     running = True
     while running:
-        dt = clock.tick(FPS) / 1000.0
+        dt = min(clock.tick(FPS) / 1000.0, 1.0 / 30.0)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
 
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT]:
-            ik_target[0] -= TARGET_SPEED
-        if keys[pygame.K_RIGHT]:
-            ik_target[0] += TARGET_SPEED
-        if keys[pygame.K_UP]:
-            ik_target[1] -= TARGET_SPEED
-        if keys[pygame.K_DOWN]:
-            ik_target[1] += TARGET_SPEED
-        if pygame.mouse.get_pressed()[0]:
-            mouse_x, mouse_y = pygame.mouse.get_pos()
-            ik_target = [mouse_x, mouse_y]
-
-        time_seconds = pygame.time.get_ticks() / 1000.0
-        fk_points = fk_chain.points([time_seconds, time_seconds * 2.0])
-        ik_angles = ik_solver.solve(ik_angles, tuple(ik_target))
-        ik_points = ik_chain.points(ik_angles)
-
-        world.update(dt)
-
-        screen.fill(BACKGROUND_COLOR)
-        particle_system.draw(screen)
-        pygame.draw.line(
-            screen,
-            PANEL_LINE_COLOR,
-            (0, SCREEN_HEIGHT * 0.5),
-            (SCREEN_WIDTH, SCREEN_HEIGHT * 0.5),
-            2,
-        )
-        pygame.draw.line(
-            screen,
-            PANEL_LINE_COLOR,
-            (SCREEN_WIDTH * 0.5, 0),
-            (SCREEN_WIDTH * 0.5, SCREEN_HEIGHT),
-            2,
-        )
-        _draw_forward_kinematics(screen, fk_points)
-        _draw_inverse_kinematics(screen, ik_points, ik_target)
-        _draw_rigid_bodies(screen, rigid_bodies)
-        soft_body.draw(
-            screen,
-            particle_color=SOFT_BODY_PARTICLE,
-            spring_color=SOFT_BODY_SPRING,
-            fill_color=SOFT_BODY_FILL,
-        )
-
+        _handle_player_input(runtime, pygame.key.get_pressed())
+        _update_runtime(runtime, dt)
+        _draw_level(screen, runtime, font, small_font)
         pygame.display.flip()
 
     pygame.quit()
 
 
-def _draw_forward_kinematics(surface, points: list[tuple[float, float]]) -> None:
-    pygame.draw.circle(surface, FK_BASE_COLOR, points[0], BASE_RADIUS)
-    pygame.draw.line(surface, FK_LINK_1_COLOR, points[0], points[1], LINK_WIDTH)
-    pygame.draw.line(surface, FK_LINK_2_COLOR, points[1], points[2], LINK_WIDTH)
+def _create_runtime(level: Level) -> LevelRuntime:
+    player_spec = level.player
+    player = Body(
+        player_spec.position,
+        radius=player_spec.radius,
+        mass=player_spec.mass,
+        restitution=player_spec.restitution,
+        friction=player_spec.friction,
+    )
+    crates = {
+        spec.id: Body(
+            spec.position,
+            radius=spec.radius,
+            mass=spec.mass,
+            restitution=spec.restitution,
+            friction=spec.friction,
+        )
+        for spec in level.rigid_bodies
+    }
+    platforms = [
+        StaticBox(position=Vector2(spec.position), half_size=Vector2(spec.size) * 0.5)
+        for spec in level.platforms
+    ]
+    gates = {
+        spec.id: StaticBox(
+            position=Vector2(spec.position),
+            half_size=Vector2(spec.size) * 0.5,
+            friction=0.0,
+        )
+        for spec in level.gates
+    }
+    gate_closed = {spec.id: spec.closed for spec in level.gates}
+    world = World(
+        bounds=Bounds(0.0, 0.0, level.bounds.width, level.bounds.height),
+        gravity=level.gravity,
+        floor_friction=420.0,
+        collision_iterations=3,
+        positional_correction=0.85,
+    )
+    world.add_body(player)
+    world.add_bodies(list(crates.values()))
+    soft_bodies = [
+        SoftBody(
+            center=spec.center,
+            particle_count=spec.particle_count,
+            radius=spec.radius,
+            particle_radius=spec.particle_radius,
+            particle_mass=spec.particle_mass,
+            spring_stiffness=spec.spring_stiffness,
+            spring_damping=spec.spring_damping,
+            pressure=spec.pressure,
+            restitution=spec.restitution,
+        )
+        for spec in level.soft_bodies
+    ]
+    for soft_body, spec in zip(soft_bodies, level.soft_bodies):
+        world.add_soft_body(
+            soft_body,
+            gravity=spec.gravity,
+            bounds=Bounds(0.0, 0.0, level.bounds.width, level.bounds.height),
+            time_step=spec.time_step,
+        )
+    return LevelRuntime(
+        level=level,
+        world=world,
+        player=player,
+        crates=crates,
+        platforms=platforms,
+        gates=gates,
+        gate_closed=gate_closed,
+        soft_bodies=soft_bodies,
+        spark_emitters=[],
+    )
 
 
-def _draw_inverse_kinematics(
-    surface,
-    points: list[tuple[float, float]],
-    target: list[float],
+def _handle_player_input(runtime: LevelRuntime, keys: pygame.key.ScancodeWrapper) -> None:
+    direction = 0.0
+    if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+        direction -= 1.0
+    if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+        direction += 1.0
+
+    control = 1.0 if runtime.grounded else AIR_CONTROL
+    runtime.player.apply_force(
+        (direction * PLAYER_MOVE_FORCE * runtime.player.mass * control, 0.0)
+    )
+    runtime.player.velocity.x = _clamp(
+        runtime.player.velocity.x,
+        -PLAYER_MAX_SPEED,
+        PLAYER_MAX_SPEED,
+    )
+
+    if (keys[pygame.K_SPACE] or keys[pygame.K_UP] or keys[pygame.K_w]) and runtime.grounded:
+        runtime.player.velocity.y = -PLAYER_JUMP_SPEED
+        runtime.grounded = False
+
+
+def _update_runtime(runtime: LevelRuntime, dt: float) -> None:
+    runtime.world.update(dt)
+    runtime.grounded = False
+
+    active_gate_boxes = [
+        gate for gate_id, gate in runtime.gates.items() if runtime.gate_closed[gate_id]
+    ]
+    for body in [runtime.player, *runtime.crates.values()]:
+        for box in [*runtime.platforms, *active_gate_boxes]:
+            collision = _resolve_level_box_collision(body, box)
+            if body is runtime.player and collision is not None and _is_floor_contact(collision.normal):
+                runtime.grounded = True
+                if abs(runtime.player.velocity.y) < 10.0:
+                    runtime.player.velocity.y = 0.0
+
+    if not runtime.switch_active and _switch_is_pressed(runtime):
+        runtime.switch_active = True
+        for switch in runtime.level.switches:
+            runtime.gate_closed[switch.activates] = False
+        _emit_switch_sparks(runtime)
+
+    runtime.won = _body_overlaps_circle(runtime.player, runtime.level.goal.position, runtime.level.goal.radius)
+    for emitter in runtime.spark_emitters:
+        emitter.update(dt)
+        emitter.clear_dead()
+
+
+def _switch_is_pressed(runtime: LevelRuntime) -> bool:
+    for switch in runtime.level.switches:
+        body = runtime.crates.get(switch.required_body or "")
+        if body is None:
+            continue
+        if detect_circle_aabb_collision(body, AABB.from_center(switch.position, switch.size)):
+            return True
+    return False
+
+
+def _resolve_level_box_collision(body: Body, box: StaticBox):
+    collision = detect_circle_aabb_collision(body, AABB.from_center(box.position, box.half_size * 2.0))
+    if collision is None:
+        return None
+
+    resolve_collision(
+        body,
+        box,
+        collision,
+        restitution=0.0,
+        friction=STATIC_FRICTION if _is_floor_contact(collision.normal) else 0.0,
+        positional_correction=1.0,
+    )
+    return collision
+
+
+def _is_floor_contact(normal: Vector2) -> bool:
+    return normal.y > 0.6
+
+
+def _emit_switch_sparks(runtime: LevelRuntime) -> None:
+    for effect in runtime.level.particle_effects:
+        if effect.trigger != "gate-switch.activated":
+            continue
+        emitter = _spark_emitter(effect)
+        emitter.emit(effect.count)
+        runtime.spark_emitters.append(emitter)
+
+
+def _spark_emitter(effect: ParticleEffectSpec) -> ParticleEmitter:
+    x, y = effect.position
+    return ParticleEmitter(
+        spawn_area=(x - 4.0, y - 4.0, 8.0, 8.0),
+        particle_count=0,
+        velocity_range=effect.velocity,
+        acceleration=SPARK_GRAVITY,
+        radius_range=(2.0, 4.0),
+        lifetime_range=effect.lifetime,
+        color=effect.color,
+        loop=False,
+    )
+
+
+def _draw_level(
+    surface: pygame.Surface,
+    runtime: LevelRuntime,
+    font: pygame.font.Font,
+    small_font: pygame.font.Font,
 ) -> None:
-    for index in range(len(points) - 1):
-        pygame.draw.line(surface, IK_LINK_COLOR, points[index], points[index + 1], 5)
-        pygame.draw.circle(
+    if runtime.static_surface is None:
+        runtime.static_surface = _build_static_surface(surface, runtime)
+    surface.blit(runtime.static_surface, (0, 0))
+    _draw_switches(surface, runtime)
+    _draw_gates(surface, runtime)
+    for soft_body in runtime.soft_bodies:
+        soft_body.draw(
             surface,
-            IK_JOINT_COLOR,
-            (int(points[index][0]), int(points[index][1])),
-            8,
+            particle_color=SOFT_BODY_PARTICLE,
+            spring_color=SOFT_BODY_SPRING,
+            fill_color=SOFT_BODY_FILL,
+        )
+    _draw_body(surface, runtime.player, PLAYER_COLOR, PLAYER_CORE_COLOR)
+    for crate in runtime.crates.values():
+        _draw_body(surface, crate, CRATE_COLOR, CRATE_EDGE_COLOR)
+    for emitter in runtime.spark_emitters:
+        emitter.draw(surface)
+    _draw_hud(surface, runtime, font, small_font)
+
+
+def _build_static_surface(
+    surface: pygame.Surface,
+    runtime: LevelRuntime,
+) -> pygame.Surface:
+    static_surface = pygame.Surface(surface.get_size()).convert()
+    static_surface.fill(BACKGROUND_COLOR)
+    _draw_grid(static_surface)
+    _draw_platforms(static_surface, runtime)
+    _draw_goal(static_surface, runtime)
+    return static_surface
+
+
+def _draw_grid(surface: pygame.Surface) -> None:
+    width, height = surface.get_size()
+    for x in range(0, width, 40):
+        pygame.draw.line(surface, GRID_COLOR, (x, 0), (x, height), 1)
+    for y in range(0, height, 40):
+        pygame.draw.line(surface, GRID_COLOR, (0, y), (width, y), 1)
+
+
+def _draw_platforms(surface: pygame.Surface, runtime: LevelRuntime) -> None:
+    for spec, platform in zip(runtime.level.platforms, runtime.platforms):
+        if spec.kind == "hidden":
+            continue
+        rect = _box_rect(platform)
+        pygame.draw.rect(surface, PLATFORM_COLOR, rect, border_radius=3)
+        pygame.draw.rect(surface, PLATFORM_EDGE_COLOR, rect, 2, border_radius=3)
+
+
+def _draw_switches(surface: pygame.Surface, runtime: LevelRuntime) -> None:
+    color = SWITCH_ON_COLOR if runtime.switch_active else SWITCH_OFF_COLOR
+    for switch in runtime.level.switches:
+        rect = _center_rect(switch.position, switch.size)
+        pygame.draw.rect(surface, color, rect, border_radius=3)
+
+
+def _draw_gates(surface: pygame.Surface, runtime: LevelRuntime) -> None:
+    for gate_id, gate in runtime.gates.items():
+        rect = _box_rect(gate)
+        if runtime.gate_closed[gate_id]:
+            pygame.draw.rect(surface, GATE_COLOR, rect, border_radius=4)
+        else:
+            pygame.draw.rect(surface, GATE_OPEN_COLOR, rect, 2, border_radius=4)
+
+
+def _draw_goal(surface: pygame.Surface, runtime: LevelRuntime) -> None:
+    position = Vector2(runtime.level.goal.position)
+    pygame.draw.circle(surface, GOAL_COLOR, position, runtime.level.goal.radius, 3)
+    pygame.draw.circle(surface, GOAL_COLOR, position, 5)
+
+
+def _draw_body(
+    surface: pygame.Surface,
+    body: Body,
+    fill_color: tuple[int, int, int],
+    edge_color: tuple[int, int, int],
+) -> None:
+    pygame.draw.circle(surface, fill_color, body.position, body.radius)
+    pygame.draw.circle(surface, edge_color, body.position, body.radius, 3)
+
+
+def _draw_hud(
+    surface: pygame.Surface,
+    runtime: LevelRuntime,
+    font: pygame.font.Font,
+    small_font: pygame.font.Font,
+) -> None:
+    if runtime.hud_surface is None:
+        runtime.hud_surface = _build_hud_surface(surface, runtime, font, small_font)
+    surface.blit(runtime.hud_surface, (0, 0))
+    if runtime.won and runtime.win_surface is not None:
+        surface.blit(
+            runtime.win_surface,
+            (
+                surface.get_width() // 2 - runtime.win_surface.get_width() // 2,
+                110,
+            ),
         )
 
-    pygame.draw.circle(
-        surface,
-        IK_END_COLOR,
-        (int(points[-1][0]), int(points[-1][1])),
-        10,
+
+def _build_hud_surface(
+    surface: pygame.Surface,
+    runtime: LevelRuntime,
+    font: pygame.font.Font,
+    small_font: pygame.font.Font,
+) -> pygame.Surface:
+    hud_surface = pygame.Surface(surface.get_size(), pygame.SRCALPHA).convert_alpha()
+    title = font.render(runtime.level.name, True, TEXT_COLOR)
+    controls = small_font.render("A/D or arrows move   Space/W jumps", True, MUTED_TEXT_COLOR)
+    hud_surface.blit(title, (18, 16))
+    _draw_wrapped_text(
+        hud_surface,
+        small_font,
+        str(runtime.level.metadata["objective"]),
+        (18, 46),
+        surface.get_width() - 36,
+        MUTED_TEXT_COLOR,
     )
-    pygame.draw.circle(surface, IK_TARGET_COLOR, (int(target[0]), int(target[1])), 6)
+    hud_surface.blit(controls, (18, 92))
+    return hud_surface
 
 
-def _draw_rigid_bodies(surface, bodies: list[Body]) -> None:
-    for index, body in enumerate(bodies):
-        if body.inv_mass == 0.0:
-            color = RIGID_BODY_STATIC_COLOR
-        else:
-            color = RIGID_BODY_COLORS[index % len(RIGID_BODY_COLORS)]
+def _draw_wrapped_text(
+    surface: pygame.Surface,
+    font: pygame.font.Font,
+    text: str,
+    position: tuple[int, int],
+    max_width: int,
+    color: tuple[int, int, int],
+) -> None:
+    x, y = position
+    line = ""
+    for word in text.split():
+        candidate = word if not line else f"{line} {word}"
+        if font.size(candidate)[0] <= max_width:
+            line = candidate
+            continue
+        surface.blit(font.render(line, True, color), (x, y))
+        y += font.get_linesize()
+        line = word
+    if line:
+        surface.blit(font.render(line, True, color), (x, y))
 
-        pygame.draw.circle(surface, color, body.position, body.radius)
-        pygame.draw.circle(surface, RIGID_BODY_OUTLINE, body.position, body.radius, 2)
+
+def _body_overlaps_circle(
+    body: Body,
+    position: tuple[float, float],
+    radius: float,
+) -> bool:
+    return body.position.distance_squared_to(Vector2(position)) <= (body.radius + radius) ** 2
+
+
+def _box_rect(box: StaticBox) -> pygame.Rect:
+    return _center_rect(box.position, box.half_size * 2.0)
+
+
+def _center_rect(
+    position: tuple[float, float] | Vector2,
+    size: tuple[float, float] | Vector2,
+) -> pygame.Rect:
+    center = Vector2(position)
+    box_size = Vector2(size)
+    return pygame.Rect(
+        round(center.x - box_size.x * 0.5),
+        round(center.y - box_size.y * 0.5),
+        round(box_size.x),
+        round(box_size.y),
+    )
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(value, maximum))
+
+
+def _level_number_from_args() -> int:
+    if len(sys.argv) < 2:
+        return 1
+    try:
+        return int(sys.argv[1])
+    except ValueError:
+        return 1
 
 
 if __name__ == "__main__":
