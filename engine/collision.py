@@ -19,6 +19,21 @@ class CircularBody(Protocol):
     def inv_mass(self) -> float:
         ...
 
+
+class AABBBody(Protocol):
+    """Interface for a movable axis-aligned box body."""
+
+    position: Vector2
+    velocity: Vector2
+    half_size: Vector2
+    restitution: float
+    friction: float
+
+    @property
+    def inv_mass(self) -> float:
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class Bounds:
     """Axis-aligned rectangle that keeps circular bodies inside the world."""
@@ -40,15 +55,70 @@ class Bounds:
 
 
 @dataclass(frozen=True, slots=True)
+class AABB:
+    """Axis-aligned box represented by minimum and maximum corners."""
+
+    min_x: float
+    min_y: float
+    max_x: float
+    max_y: float
+
+    @classmethod
+    def from_center(
+        cls,
+        center: tuple[float, float] | Vector2,
+        size: tuple[float, float] | Vector2,
+    ) -> AABB:
+        center = Vector2(center)
+        half_size = Vector2(size) * 0.5
+        return cls(
+            min_x=center.x - half_size.x,
+            min_y=center.y - half_size.y,
+            max_x=center.x + half_size.x,
+            max_y=center.y + half_size.y,
+        )
+
+    @classmethod
+    def from_size(
+        cls,
+        width: float,
+        height: float,
+        origin: tuple[float, float] = (0.0, 0.0),
+    ) -> AABB:
+        min_x, min_y = origin
+        return cls(min_x=min_x, min_y=min_y, max_x=min_x + width, max_y=min_y + height)
+
+    @property
+    def center(self) -> Vector2:
+        return Vector2((self.min_x + self.max_x) * 0.5, (self.min_y + self.max_y) * 0.5)
+
+    @property
+    def half_size(self) -> Vector2:
+        return Vector2((self.max_x - self.min_x) * 0.5, (self.max_y - self.min_y) * 0.5)
+
+
+@dataclass(frozen=True, slots=True)
 class CollisionManifold:
-    """Details about a circle overlap.
+    """Details about a shape overlap.
 
     normal points from body_a toward body_b.
-    penetration is how far the two circles overlap.
+    penetration is how far the shapes overlap along the normal.
     """
 
     normal: Vector2
     penetration: float
+
+
+def body_aabb(body: AABBBody) -> AABB:
+    """Return an AABB snapshot for a box body."""
+
+    half_size = Vector2(body.half_size)
+    return AABB(
+        min_x=body.position.x - half_size.x,
+        min_y=body.position.y - half_size.y,
+        max_x=body.position.x + half_size.x,
+        max_y=body.position.y + half_size.y,
+    )
 
 
 def detect_circle_collision(
@@ -75,6 +145,59 @@ def detect_circle_collision(
     return CollisionManifold(normal=collision_normal, penetration=overlap_depth)
 
 
+def detect_aabb_collision(
+    box_a: AABB | Bounds,
+    box_b: AABB | Bounds,
+) -> CollisionManifold | None:
+    """Return collision details when two axis-aligned boxes overlap."""
+
+    overlap_x = min(box_a.max_x, box_b.max_x) - max(box_a.min_x, box_b.min_x)
+    overlap_y = min(box_a.max_y, box_b.max_y) - max(box_a.min_y, box_b.min_y)
+
+    if overlap_x <= 0.0 or overlap_y <= 0.0:
+        return None
+
+    center_offset = _aabb_center(box_b) - _aabb_center(box_a)
+    if overlap_x < overlap_y:
+        normal = Vector2(1.0 if center_offset.x >= 0.0 else -1.0, 0.0)
+        penetration = overlap_x
+    else:
+        normal = Vector2(0.0, 1.0 if center_offset.y >= 0.0 else -1.0)
+        penetration = overlap_y
+
+    return CollisionManifold(normal=normal, penetration=penetration)
+
+
+def detect_circle_aabb_collision(
+    circle: CircularBody,
+    box: AABB | Bounds,
+) -> CollisionManifold | None:
+    """Return collision details when a circle overlaps an axis-aligned box.
+
+    The returned normal is oriented for resolving the circle as body A and the
+    box as body B.
+    """
+
+    closest = Vector2(
+        _clamp(circle.position.x, box.min_x, box.max_x),
+        _clamp(circle.position.y, box.min_y, box.max_y),
+    )
+    offset = closest - circle.position
+    squared_distance = offset.length_squared()
+
+    if squared_distance > circle.radius * circle.radius:
+        return None
+
+    if squared_distance > 0.0:
+        distance = squared_distance ** 0.5
+        return CollisionManifold(
+            normal=offset / distance,
+            penetration=circle.radius - distance,
+        )
+
+    return _circle_inside_aabb_collision(circle, box)
+
+
 def resolve_circle_collision(
     body_a: CircularBody,
     body_b: CircularBody,
@@ -92,12 +215,80 @@ def resolve_circle_collision(
     if collision is None:
         return None
 
+    resolve_collision(
+        body_a,
+        body_b,
+        collision,
+        restitution=restitution,
+        friction=friction,
+        positional_correction=positional_correction,
+    )
+    return collision
+
+
+def resolve_aabb_collision(
+    body_a: AABBBody,
+    body_b: AABBBody,
+    restitution: float | None = None,
+    friction: float | None = None,
+    positional_correction: float = 1.0,
+) -> CollisionManifold | None:
+    """Separate two overlapping AABB bodies and update their velocities."""
+
+    collision = detect_aabb_collision(body_aabb(body_a), body_aabb(body_b))
+    if collision is None:
+        return None
+
+    resolve_collision(
+        body_a,
+        body_b,
+        collision,
+        restitution=restitution,
+        friction=friction,
+        positional_correction=positional_correction,
+    )
+    return collision
+
+
+def resolve_circle_aabb_collision(
+    circle: CircularBody,
+    box_body: AABBBody,
+    restitution: float | None = None,
+    friction: float | None = None,
+    positional_correction: float = 1.0,
+) -> CollisionManifold | None:
+    """Separate an overlapping circle and AABB body and update velocities."""
+
+    collision = detect_circle_aabb_collision(circle, body_aabb(box_body))
+    if collision is None:
+        return None
+
+    resolve_collision(
+        circle,
+        box_body,
+        collision,
+        restitution=restitution,
+        friction=friction,
+        positional_correction=positional_correction,
+    )
+    return collision
+
+
+def resolve_collision(
+    body_a: CircularBody | AABBBody,
+    body_b: CircularBody | AABBBody,
+    collision: CollisionManifold,
+    restitution: float | None = None,
+    friction: float | None = None,
+    positional_correction: float = 1.0,
+) -> None:
+    """Resolve a known collision manifold between two movable bodies."""
+
     inverse_mass_sum = _combined_inverse_mass(body_a, body_b)
     if inverse_mass_sum == 0.0:
-        return collision
+        return
 
     _separate_bodies(body_a, body_b, collision, positional_correction)
-
     normal_impulse = _apply_bounce_impulse(
         body_a,
         body_b,
@@ -106,7 +297,7 @@ def resolve_circle_collision(
         restitution,
     )
     if normal_impulse is None:
-        return collision
+        return
 
     _apply_friction_impulse(
         body_a,
@@ -116,7 +307,6 @@ def resolve_circle_collision(
         normal_impulse,
         friction,
     )
-    return collision
 
 
 def resolve_all_circle_collisions(
@@ -183,13 +373,16 @@ def resolve_bounds_collision(
     return contacts
 
 
-def _combined_inverse_mass(body_a: CircularBody, body_b: CircularBody) -> float:
+def _combined_inverse_mass(
+    body_a: CircularBody | AABBBody,
+    body_b: CircularBody | AABBBody,
+) -> float:
     return body_a.inv_mass + body_b.inv_mass
 
 
 def _separate_bodies(
-    body_a: CircularBody,
-    body_b: CircularBody,
+    body_a: CircularBody | AABBBody,
+    body_b: CircularBody | AABBBody,
     manifold: CollisionManifold,
     positional_correction: float,
 ) -> None:
@@ -203,8 +396,8 @@ def _separate_bodies(
 
 
 def _apply_bounce_impulse(
-    body_a: CircularBody,
-    body_b: CircularBody,
+    body_a: CircularBody | AABBBody,
+    body_b: CircularBody | AABBBody,
     manifold: CollisionManifold,
     inv_mass_sum: float,
     restitution: float | None,
@@ -224,8 +417,8 @@ def _apply_bounce_impulse(
 
 
 def _apply_friction_impulse(
-    body_a: CircularBody,
-    body_b: CircularBody,
+    body_a: CircularBody | AABBBody,
+    body_b: CircularBody | AABBBody,
     manifold: CollisionManifold,
     inv_mass_sum: float,
     normal_impulse: float,
@@ -252,14 +445,18 @@ def _apply_friction_impulse(
     _apply_impulse(body_a, body_b, tangent_direction * friction_impulse)
 
 
-def _apply_impulse(body_a: CircularBody, body_b: CircularBody, impulse: Vector2) -> None:
+def _apply_impulse(
+    body_a: CircularBody | AABBBody,
+    body_b: CircularBody | AABBBody,
+    impulse: Vector2,
+) -> None:
     body_a.velocity -= impulse * body_a.inv_mass
     body_b.velocity += impulse * body_b.inv_mass
 
 
 def _collision_restitution(
-    body_a: CircularBody,
-    body_b: CircularBody,
+    body_a: CircularBody | AABBBody,
+    body_b: CircularBody | AABBBody,
     override: float | None,
 ) -> float:
     if override is not None:
@@ -268,8 +465,8 @@ def _collision_restitution(
 
 
 def _collision_friction(
-    body_a: CircularBody,
-    body_b: CircularBody,
+    body_a: CircularBody | AABBBody,
+    body_b: CircularBody | AABBBody,
     override: float | None,
 ) -> float:
     if override is not None:
@@ -295,3 +492,32 @@ def _move_toward_zero(value: float, amount: float) -> float:
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(value, maximum))
+
+
+def _aabb_center(box: AABB | Bounds) -> Vector2:
+    return Vector2((box.min_x + box.max_x) * 0.5, (box.min_y + box.max_y) * 0.5)
+
+
+def _circle_inside_aabb_collision(
+    circle: CircularBody,
+    box: AABB | Bounds,
+) -> CollisionManifold:
+    distances = {
+        "left": circle.position.x - box.min_x,
+        "right": box.max_x - circle.position.x,
+        "top": circle.position.y - box.min_y,
+        "bottom": box.max_y - circle.position.y,
+    }
+    side = min(distances, key=distances.get)
+    distance_to_side = distances[side]
+
+    if side == "left":
+        normal = Vector2(1.0, 0.0)
+    elif side == "right":
+        normal = Vector2(-1.0, 0.0)
+    elif side == "top":
+        normal = Vector2(0.0, 1.0)
+    else:
+        normal = Vector2(0.0, -1.0)
+
+    return CollisionManifold(normal=normal, penetration=circle.radius + distance_to_side)
