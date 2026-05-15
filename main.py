@@ -21,7 +21,7 @@ from game.level import Level, ParticleEffectSpec
 from game.level_loader import load_level
 
 FPS = 120
-MAX_LEVEL = 2
+MAX_LEVEL = 3
 BACKGROUND_COLOR = (16, 19, 25)
 GRID_COLOR = (28, 34, 45)
 PLATFORM_COLOR = (78, 88, 104)
@@ -44,6 +44,10 @@ SWITCH_ON_COLOR = (0, 220, 150)
 GATE_COLOR = (255, 88, 88)
 GATE_OPEN_COLOR = (70, 88, 92)
 GOAL_COLOR = (126, 255, 117)
+ARM_BASE_COLOR = (88, 116, 150)
+ARM_LINK_COLOR = (170, 190, 216)
+ARM_JOINT_COLOR = (255, 215, 95)
+ARM_GRAB_COLOR = (126, 255, 117)
 TEXT_COLOR = (226, 234, 245)
 MUTED_TEXT_COLOR = (150, 160, 176)
 PLAYER_MOVE_FORCE = 3200.0
@@ -56,6 +60,9 @@ NET_GRAVITY = 780.0
 NET_DAMPING = 0.025
 NET_STIFFNESS = 52.0    
 NET_PLAYER_FORCE = 9000.0
+ARM_ROTATION_SPEED = 0.035
+ARM_GRAB_RANGE = 62.0
+ARM_PULL_FORCE = 95000.0
 
 
 @dataclass(slots=True)
@@ -152,6 +159,28 @@ class NetBridge:
 
 
 @dataclass(slots=True)
+class ArmState:
+    base: Vector2 = field(default_factory=lambda: Vector2(540.0, 400.0))
+    shoulder_angle: float = 2.6
+    elbow_angle: float = -0.7
+    upper_length: float = 160.0
+    lower_length: float = 120.0
+    grabbing: bool = False
+
+    @property
+    def joint(self) -> Vector2:
+        return self.base + Vector2(
+            math.cos(self.shoulder_angle),
+            math.sin(self.shoulder_angle),
+        ) * self.upper_length
+
+    @property
+    def claw(self) -> Vector2:
+        angle = self.shoulder_angle + self.elbow_angle
+        return self.joint + Vector2(math.cos(angle), math.sin(angle)) * self.lower_length
+
+
+@dataclass(slots=True)
 class LevelRuntime:
     level: Level
     world: World
@@ -162,6 +191,7 @@ class LevelRuntime:
     gate_closed: dict[str, bool]
     soft_bodies: list[SoftBody]
     net_bridges: list[NetBridge]
+    arm: ArmState | None
     spark_emitters: list[ParticleEmitter]
     static_surface: pygame.Surface | None = None
     hud_surface: pygame.Surface | None = None
@@ -304,6 +334,7 @@ def _create_runtime(level: Level) -> LevelRuntime:
         gate_closed=gate_closed,
         soft_bodies=soft_bodies,
         net_bridges=_create_net_bridges(level),
+        arm=ArmState() if level.id == "level-3" else None,
         spark_emitters=[],
     )
 
@@ -354,6 +385,40 @@ def _handle_player_input(runtime: LevelRuntime, keys: pygame.key.ScancodeWrapper
         runtime.player.velocity.y = -PLAYER_JUMP_SPEED
         runtime.grounded = False
 
+    _handle_arm_input(runtime, keys)
+
+
+def _handle_arm_input(runtime: LevelRuntime, keys: pygame.key.ScancodeWrapper) -> None:
+    if runtime.arm is None:
+        return
+
+    if keys[pygame.K_q]:
+        runtime.arm.shoulder_angle -= ARM_ROTATION_SPEED
+    if keys[pygame.K_e]:
+        runtime.arm.shoulder_angle += ARM_ROTATION_SPEED
+    if keys[pygame.K_r]:
+        runtime.arm.elbow_angle -= ARM_ROTATION_SPEED
+    if keys[pygame.K_f]:
+        runtime.arm.elbow_angle += ARM_ROTATION_SPEED
+
+    runtime.arm.shoulder_angle = _clamp(runtime.arm.shoulder_angle, 1.2, 3.0)
+    runtime.arm.elbow_angle = _clamp(runtime.arm.elbow_angle, -1.8, 0.9)
+    runtime.arm.grabbing = bool(keys[pygame.K_c])
+    if runtime.arm.grabbing:
+        _pull_nearby_crate(runtime)
+
+
+def _pull_nearby_crate(runtime: LevelRuntime) -> None:
+    if runtime.arm is None:
+        return
+
+    for crate in runtime.crates.values():
+        offset = runtime.arm.claw - crate.position
+        distance = offset.length()
+        if 0.0 < distance <= ARM_GRAB_RANGE:
+            crate.apply_force(offset.normalize() * ARM_PULL_FORCE)
+            crate.velocity *= 0.92
+
 
 def _update_runtime(runtime: LevelRuntime, dt: float) -> None:
     runtime.world.update(dt)
@@ -367,7 +432,7 @@ def _update_runtime(runtime: LevelRuntime, dt: float) -> None:
             collision = _resolve_level_box_collision(body, box)
             if body is runtime.player and collision is not None and _is_floor_contact(collision.normal):
                 runtime.grounded = True
-                if abs(runtime.player.velocity.y) < 10.0:
+                if abs(runtime.player.velocity.y) < 10.0:   
                     runtime.player.velocity.y = 0.0
 
     if not runtime.switch_active and _switch_is_pressed(runtime):
@@ -429,7 +494,7 @@ def _spark_emitter(effect: ParticleEffectSpec) -> ParticleEmitter:
         spawn_area=(x - 4.0, y - 4.0, 8.0, 8.0),
         particle_count=0,
         velocity_range=effect.velocity,
-        acceleration=SPARK_GRAVITY,
+        acceleration=SPARK_GRAVITY, 
         radius_range=(2.0, 4.0),
         lifetime_range=effect.lifetime,
         color=effect.color,
@@ -448,6 +513,7 @@ def _draw_level(
     surface.blit(runtime.static_surface, (0, 0))
     _draw_switches(surface, runtime)
     _draw_gates(surface, runtime)
+    _draw_reactor_arm(surface, runtime)
     for soft_body in runtime.soft_bodies:
         soft_body.draw(
             surface,
@@ -516,6 +582,25 @@ def _draw_goal(surface: pygame.Surface, runtime: LevelRuntime) -> None:
     pygame.draw.circle(surface, GOAL_COLOR, position, 5)
 
 
+def _draw_reactor_arm(surface: pygame.Surface, runtime: LevelRuntime) -> None:
+    if runtime.arm is None:
+        return
+
+    base = runtime.arm.base
+    joint = runtime.arm.joint
+    claw = runtime.arm.claw
+    claw_color = ARM_GRAB_COLOR if runtime.arm.grabbing else ARM_JOINT_COLOR
+
+    pygame.draw.circle(surface, ARM_BASE_COLOR, base, 18)
+    pygame.draw.line(surface, ARM_LINK_COLOR, base, joint, 10)
+    pygame.draw.line(surface, ARM_LINK_COLOR, joint, claw, 8)
+    pygame.draw.circle(surface, ARM_JOINT_COLOR, joint, 13)
+    pygame.draw.circle(surface, claw_color, claw, 9)
+    pygame.draw.circle(surface, claw_color, claw, ARM_GRAB_RANGE, 1)
+    pygame.draw.line(surface, claw_color, claw, claw + Vector2(18, -10), 4)
+    pygame.draw.line(surface, claw_color, claw, claw + Vector2(18, 10), 4)
+
+
 def _draw_body(
     surface: pygame.Surface,
     body: Body,
@@ -554,7 +639,6 @@ def _build_hud_surface(
     hud_surface = pygame.Surface(surface.get_size(), pygame.SRCALPHA).convert_alpha()
     title = font.render(runtime.level.name, True, TEXT_COLOR)
     controls = small_font.render("A/D or arrows move   Space/W jumps", True, MUTED_TEXT_COLOR)
-    next_level = small_font.render("After delivery, press Enter for Level 2", True, GOAL_COLOR)
     hud_surface.blit(title, (18, 16))
     _draw_wrapped_text(
         hud_surface,
@@ -565,8 +649,21 @@ def _build_hud_surface(
         MUTED_TEXT_COLOR,
     )
     hud_surface.blit(controls, (18, 92))
-    if runtime.level.id == "level-1":
-        hud_surface.blit(next_level, (18, 116))
+    if runtime.level.id == "level-3":
+        arm_controls = small_font.render(
+            "Arm: Q/E shoulder   R/F elbow   Hold C to pull crate",
+            True,
+            ARM_GRAB_COLOR,
+        )
+        hud_surface.blit(arm_controls, (18, 116))
+    current_level = _level_index(runtime.level)
+    if current_level < MAX_LEVEL:
+        next_level = small_font.render(
+            f"After delivery, press Enter for Level {current_level + 1}",
+            True,
+            GOAL_COLOR,
+        )
+        hud_surface.blit(next_level, (18, 140 if runtime.level.id == "level-3" else 116))
     return hud_surface
 
 
@@ -628,6 +725,13 @@ def _level_number_from_args() -> int:
     try:
         return int(sys.argv[1])
     except ValueError:
+        return 1
+
+
+def _level_index(level: Level) -> int:
+    try:
+        return int(level.id.rsplit("-", 1)[1])
+    except (IndexError, ValueError):
         return 1
 
 

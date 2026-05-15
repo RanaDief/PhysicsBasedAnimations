@@ -1,0 +1,119 @@
+{
+  "id": "level-3",
+  "name": "Reactor Access Room",
+  "bounds": {
+    "width": 1000,
+    "height": 700
+  },
+  "gravity": [0.0, 900.0],
+  "metadata": {
+    "objective": "Use the final crate switch to open the reactor gate and deliver the Power Core.",
+    "physics_focus": [
+      "rigid body puzzle",
+      "gate activation",
+      "animated kinematic arm",
+      "reactor delivery goal"
+    ],
+    "par_time_seconds": 70
+  },
+  "player": {
+    "position": [90.0, 590.0],
+    "radius": 18.0,
+    "mass": 18.0,
+    "restitution": 0.25,
+    "friction": 0.1
+  },
+  "goal": {
+    "position": [925.0, 570.0],
+    "radius": 34.0
+  },
+  "platforms": [
+    {
+      "id": "floor",
+      "position": [500.0, 675.0],
+      "size": [1000.0, 50.0],
+      "kind": "static"
+    },
+    {
+      "id": "left-wall",
+      "position": [10.0, 350.0],
+      "size": [20.0, 700.0],
+      "kind": "static"
+    },
+    {
+      "id": "right-wall",
+      "position": [990.0, 350.0],
+      "size": [20.0, 700.0],
+      "kind": "static"
+    },
+    {
+      "id": "ceiling",
+      "position": [500.0, 10.0],
+      "size": [1000.0, 20.0],
+      "kind": "static"
+    },
+    {
+      "id": "entry-platform",
+      "position": [170.0, 620.0],
+      "size": [260.0, 28.0],
+      "kind": "static"
+    },
+    {
+      "id": "switch-platform",
+      "position": [500.0, 625.0],
+      "size": [230.0, 24.0],
+      "kind": "static"
+    },
+    {
+      "id": "reactor-platform",
+      "position": [840.0, 640.0],
+      "size": [260.0, 28.0],
+      "kind": "static"
+    },
+    {
+      "id": "upper-arm-rail",
+      "position": [540.0, 400.0],
+      "size": [88.0, 18.0],
+      "kind": "static"
+    }
+  ],
+  "rigid_bodies": [
+    {
+      "id": "reactor-crate",
+      "position": [360.0, 585.0],
+      "radius": 24.0,
+      "mass": 44.0,
+      "restitution": 0.15,
+      "friction": 0.65
+    }
+  ],
+  "switches": [
+    {
+      "id": "reactor-switch",
+      "position": [500.0, 606.0],
+      "size": [80.0, 12.0],
+      "activates": "reactor-gate",
+      "required_body": "reactor-crate"
+    }
+  ],
+  "gates": [
+    {
+      "id": "reactor-gate",
+      "position": [735.0, 585.0],
+      "size": [28.0, 150.0],
+      "closed": true
+    }
+  ],
+  "soft_bodies": [],
+  "particle_effects": [
+    {
+      "id": "reactor-sparks",
+      "trigger": "gate-switch.activated",
+      "position": [500.0, 594.0],
+      "color": [126, 255, 117],
+      "count": 42,
+      "lifetime": [0.25, 0.85],
+      "velocity": [[-120.0, -260.0], [120.0, -80.0]]
+    }
+  ]
+}
