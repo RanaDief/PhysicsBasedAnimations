@@ -81,8 +81,8 @@
   "gates": [
     {
       "id": "exit-gate",
-      "position": [805.0, 595.0],
-      "size": [26.0, 150.0],
+      "position": [805.0, 560.0],
+      "size": [26.0, 220.0],
       "closed": true
     }
   ],

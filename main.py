@@ -60,6 +60,9 @@ NET_GRAVITY = 780.0
 NET_DAMPING = 0.025
 NET_STIFFNESS = 52.0    
 NET_PLAYER_FORCE = 9000.0
+BRIDGE_LOAD_STIFFNESS = 28.0
+BRIDGE_LOAD_DAMPING = 9.5
+BRIDGE_MAX_LOAD_SAG = 24.0
 ARM_ROTATION_SPEED = 0.035
 ARM_GRAB_RANGE = 62.0
 ARM_PULL_FORCE = 95000.0
@@ -128,9 +131,63 @@ class NetBridge:
     columns: int
     spacing: float
     phase: float = 0.0
+    load_offsets: list[float] = field(default_factory=list)
+    load_velocities: list[float] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.load_offsets = [0.0 for _ in range(self.columns)]
+        self.load_velocities = [0.0 for _ in range(self.columns)]
 
     def update(self, dt: float, player: Body) -> None:
         self.phase += dt * 5.0
+        player_loads = self._player_loads(player)
+
+        for index, target_offset in enumerate(player_loads):
+            offset = self.load_offsets[index]
+            velocity = self.load_velocities[index]
+            acceleration = (
+                (target_offset - offset) * BRIDGE_LOAD_STIFFNESS
+                - velocity * BRIDGE_LOAD_DAMPING
+            )
+            velocity += acceleration * dt
+            offset = _clamp(offset + velocity * dt, 0.0, BRIDGE_MAX_LOAD_SAG)
+            self.load_velocities[index] = velocity
+            self.load_offsets[index] = offset
+
+    def load_offset_at(self, x: float) -> float:
+        bridge_x = (x - self.start.x) / self.spacing
+        left_index = math.floor(bridge_x)
+        right_index = left_index + 1
+        if left_index < 0 or right_index >= self.columns:
+            return 0.0
+
+        blend = bridge_x - left_index
+        return (
+            self.load_offsets[left_index] * (1.0 - blend)
+            + self.load_offsets[right_index] * blend
+        )
+
+    def _player_loads(self, player: Body) -> list[float]:
+        loads = [0.0 for _ in range(self.columns)]
+        bridge_left = self.start.x - self.spacing * 0.5
+        bridge_right = self.start.x + (self.columns - 0.5) * self.spacing
+        player_bottom = player.position.y + player.radius
+        player_is_on_bridge = (
+            bridge_left <= player.position.x <= bridge_right
+            and self.start.y + 8.0 <= player_bottom <= self.start.y + 90.0
+        )
+        if not player_is_on_bridge:
+            return loads
+
+        influence_radius = self.spacing * 1.65
+        load_depth = _clamp(player.mass / 18.0, 0.5, 2.0) * BRIDGE_MAX_LOAD_SAG
+        for index in range(self.columns):
+            x = self.start.x + index * self.spacing
+            distance = abs(player.position.x - x)
+            influence = max(0.0, 1.0 - distance / influence_radius)
+            loads[index] = load_depth * influence * influence
+
+        return loads
 
     def draw(self, surface: pygame.Surface) -> None:
         top_rope: list[Vector2] = []
@@ -140,7 +197,12 @@ class NetBridge:
         for index in range(self.columns):
             x = self.start.x + index * self.spacing
             sag = 18.0 * (1.0 - abs(index - middle) / middle)
-            y = self.start.y + sag + 2.0 * math.sin(self.phase + index * 0.65)
+            y = (
+                self.start.y
+                + sag
+                + self.load_offsets[index]
+                + 2.0 * math.sin(self.phase + index * 0.65)
+            )
             top_rope.append(Vector2(x, y))
             bottom_rope.append(Vector2(x, y + 26.0))
 
@@ -421,6 +483,10 @@ def _pull_nearby_crate(runtime: LevelRuntime) -> None:
 
 
 def _update_runtime(runtime: LevelRuntime, dt: float) -> None:
+    for net_bridge in runtime.net_bridges:
+        net_bridge.update(dt, runtime.player)
+    _sync_bridge_supports(runtime)
+
     runtime.world.update(dt)
     runtime.grounded = False
 
@@ -442,11 +508,22 @@ def _update_runtime(runtime: LevelRuntime, dt: float) -> None:
         _emit_switch_sparks(runtime)
 
     runtime.won = _body_overlaps_circle(runtime.player, runtime.level.goal.position, runtime.level.goal.radius)
-    for net_bridge in runtime.net_bridges:
-        net_bridge.update(dt, runtime.player)
     for emitter in runtime.spark_emitters:
         emitter.update(dt)
         emitter.clear_dead()
+
+
+def _sync_bridge_supports(runtime: LevelRuntime) -> None:
+    if not runtime.net_bridges:
+        return
+
+    bridge = runtime.net_bridges[0]
+    for spec, platform in zip(runtime.level.platforms, runtime.platforms):
+        if not spec.id.startswith("soft-bridge-support"):
+            continue
+
+        base_position = Vector2(spec.position)
+        platform.position.y = base_position.y + bridge.load_offset_at(base_position.x)
 
 
 def _switch_is_pressed(runtime: LevelRuntime) -> bool:
