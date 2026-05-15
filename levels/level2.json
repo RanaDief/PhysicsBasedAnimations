@@ -7,11 +7,11 @@
   },
   "gravity": [0.0, 900.0],
   "metadata": {
-    "objective": "Cross the soft bridge cushions and carry the Power Core to the far reactor.",
+    "objective": "Cross the wobbly wooden bridge and carry the Power Core to the far reactor.",
     "physics_focus": [
-      "mass-spring soft bodies",
+      "wobbly wooden bridge",
+      "fixed endpoint constraints",
       "spring damping",
-      "spring-linked bridge cushions",
       "rigid body collision support"
     ],
     "par_time_seconds": 55
@@ -24,7 +24,7 @@
     "friction": 0.1
   },
   "goal": {
-    "position": [735.0, 455.0],
+    "position": [735.0, 470.0],
     "radius": 28.0
   },
   "platforms": [
@@ -54,32 +54,38 @@
     },
     {
       "id": "landing-ledge",
-      "position": [685.0, 520.0],
-      "size": [230.0, 36.0],
+      "position": [690.0, 545.0],
+      "size": [220.0, 36.0],
       "kind": "static"
     },
     {
       "id": "soft-bridge-support-1",
-      "position": [285.0, 520.0],
-      "size": [78.0, 18.0],
+      "position": [270.0, 545.0],
+      "size": [72.0, 16.0],
       "kind": "hidden"
     },
     {
       "id": "soft-bridge-support-2",
-      "position": [365.0, 535.0],
-      "size": [78.0, 18.0],
+      "position": [345.0, 545.0],
+      "size": [72.0, 16.0],
       "kind": "hidden"
     },
     {
       "id": "soft-bridge-support-3",
-      "position": [445.0, 535.0],
-      "size": [78.0, 18.0],
+      "position": [420.0, 545.0],
+      "size": [72.0, 16.0],
       "kind": "hidden"
     },
     {
       "id": "soft-bridge-support-4",
-      "position": [525.0, 520.0],
-      "size": [78.0, 18.0],
+      "position": [495.0, 545.0],
+      "size": [72.0, 16.0],
+      "kind": "hidden"
+    },
+    {
+      "id": "soft-bridge-support-5",
+      "position": [570.0, 545.0],
+      "size": [72.0, 16.0],
       "kind": "hidden"
     },
     {
@@ -89,75 +95,9 @@
       "kind": "static"
     }
   ],
-  "rigid_bodies": [
-    {
-      "id": "test-weight",
-      "position": [350.0, 455.0],
-      "radius": 18.0,
-      "mass": 28.0,
-      "restitution": 0.2,
-      "friction": 0.35
-    }
-  ],
+  "rigid_bodies": [],
   "switches": [],
   "gates": [],
-  "soft_bodies": [
-    {
-      "id": "bridge-cushion-1",
-      "center": [285.0, 500.0],
-      "particle_count": 10,
-      "radius": 34.0,
-      "particle_radius": 4.0,
-      "particle_mass": 1.1,
-      "spring_stiffness": 0.18,
-      "spring_damping": 0.28,
-      "pressure": 0.14,
-      "restitution": 0.45,
-      "gravity": [0.0, 0.0],
-      "time_step": 0.016
-    },
-    {
-      "id": "bridge-cushion-2",
-      "center": [365.0, 515.0],
-      "particle_count": 10,
-      "radius": 34.0,
-      "particle_radius": 4.0,
-      "particle_mass": 1.1,
-      "spring_stiffness": 0.18,
-      "spring_damping": 0.28,
-      "pressure": 0.14,
-      "restitution": 0.45,
-      "gravity": [0.0, 0.0],
-      "time_step": 0.016
-    },
-    {
-      "id": "bridge-cushion-3",
-      "center": [445.0, 515.0],
-      "particle_count": 10,
-      "radius": 34.0,
-      "particle_radius": 4.0,
-      "particle_mass": 1.1,
-      "spring_stiffness": 0.18,
-      "spring_damping": 0.28,
-      "pressure": 0.14,
-      "restitution": 0.45,
-      "gravity": [0.0, 0.0],
-      "time_step": 0.016
-    },
-    {
-      "id": "bridge-cushion-4",
-      "center": [525.0, 500.0],
-      "particle_count": 10,
-      "radius": 34.0,
-      "particle_radius": 4.0,
-      "particle_mass": 1.1,
-      "spring_stiffness": 0.18,
-      "spring_damping": 0.28,
-      "pressure": 0.14,
-      "restitution": 0.45,
-      "gravity": [0.0, 0.0],
-      "time_step": 0.016
-    }
-  ],
+  "soft_bodies": [],
   "particle_effects": []
 }

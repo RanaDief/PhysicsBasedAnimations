@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 from dataclasses import dataclass, field
 
@@ -20,6 +21,7 @@ from game.level import Level, ParticleEffectSpec
 from game.level_loader import load_level
 
 FPS = 120
+MAX_LEVEL = 2
 BACKGROUND_COLOR = (16, 19, 25)
 GRID_COLOR = (28, 34, 45)
 PLATFORM_COLOR = (78, 88, 104)
@@ -31,6 +33,12 @@ CRATE_EDGE_COLOR = (255, 220, 132)
 SOFT_BODY_FILL = (86, 194, 255)
 SOFT_BODY_PARTICLE = (202, 244, 255)
 SOFT_BODY_SPRING = (44, 112, 170)
+NET_FIXED_COLOR = (255, 95, 95)
+NET_PARTICLE_COLOR = (105, 235, 170)
+NET_SPRING_COLOR = (190, 220, 245)
+BRIDGE_ROPE_COLOR = (178, 142, 92)
+BRIDGE_PLANK_COLOR = (142, 92, 48)
+BRIDGE_PLANK_EDGE = (222, 177, 104)
 SWITCH_OFF_COLOR = (88, 98, 112)
 SWITCH_ON_COLOR = (0, 220, 150)
 GATE_COLOR = (255, 88, 88)
@@ -44,6 +52,10 @@ PLAYER_JUMP_SPEED = 520.0
 AIR_CONTROL = 0.65
 STATIC_FRICTION = 0.18
 SPARK_GRAVITY = (0.0, 520.0)
+NET_GRAVITY = 780.0
+NET_DAMPING = 0.025
+NET_STIFFNESS = 52.0    
+NET_PLAYER_FORCE = 9000.0
 
 
 @dataclass(slots=True)
@@ -60,6 +72,86 @@ class StaticBox:
 
 
 @dataclass(slots=True)
+class NetParticle:
+    position: Vector2
+    velocity: Vector2 = field(default_factory=Vector2)
+    is_static: bool = False
+
+    def apply_force(self, force: Vector2, dt: float) -> None:
+        if not self.is_static:
+            self.velocity += force * dt
+
+    def update(self, dt: float) -> None:
+        if self.is_static:
+            return
+        self.velocity.y += NET_GRAVITY * dt
+        self.velocity *= 1.0 - NET_DAMPING
+        self.position += self.velocity * dt
+
+
+@dataclass(slots=True)
+class NetSpring:
+    particle_a: NetParticle
+    particle_b: NetParticle
+    rest_length: float
+
+    def apply_force(self, dt: float) -> None:
+        offset = self.particle_b.position - self.particle_a.position
+        distance = offset.length()
+        if distance == 0.0:
+            return
+
+        force = offset.normalize() * ((distance - self.rest_length) * NET_STIFFNESS)
+        self.particle_a.apply_force(force, dt)
+        self.particle_b.apply_force(-force, dt)
+
+    def draw(self, surface: pygame.Surface) -> None:
+        pygame.draw.line(
+            surface,
+            NET_SPRING_COLOR,
+            self.particle_a.position,
+            self.particle_b.position,
+            2,
+        )
+
+
+@dataclass(slots=True)
+class NetBridge:
+    start: Vector2
+    columns: int
+    spacing: float
+    phase: float = 0.0
+
+    def update(self, dt: float, player: Body) -> None:
+        self.phase += dt * 5.0
+
+    def draw(self, surface: pygame.Surface) -> None:
+        top_rope: list[Vector2] = []
+        bottom_rope: list[Vector2] = []
+        middle = (self.columns - 1) * 0.5
+
+        for index in range(self.columns):
+            x = self.start.x + index * self.spacing
+            sag = 18.0 * (1.0 - abs(index - middle) / middle)
+            y = self.start.y + sag + 2.0 * math.sin(self.phase + index * 0.65)
+            top_rope.append(Vector2(x, y))
+            bottom_rope.append(Vector2(x, y + 26.0))
+
+        pygame.draw.lines(surface, BRIDGE_ROPE_COLOR, False, top_rope, 4)
+        pygame.draw.lines(surface, BRIDGE_ROPE_COLOR, False, bottom_rope, 4)
+
+        for top, bottom in zip(top_rope, bottom_rope):
+            center = (top + bottom) * 0.5
+            rect = pygame.Rect(0, 0, 24, 34)
+            rect.center = (round(center.x), round(center.y))
+            pygame.draw.rect(surface, BRIDGE_PLANK_COLOR, rect, border_radius=2)
+            pygame.draw.rect(surface, BRIDGE_PLANK_EDGE, rect, 2, border_radius=2)
+
+        pygame.draw.circle(surface, NET_FIXED_COLOR, top_rope[0], 6)
+        pygame.draw.circle(surface, NET_FIXED_COLOR, top_rope[-1], 6)
+
+
+@dataclass(slots=True)
 class LevelRuntime:
     level: Level
     world: World
@@ -69,6 +161,7 @@ class LevelRuntime:
     gates: dict[str, StaticBox]
     gate_closed: dict[str, bool]
     soft_bodies: list[SoftBody]
+    net_bridges: list[NetBridge]
     spark_emitters: list[ParticleEmitter]
     static_surface: pygame.Surface | None = None
     hud_surface: pygame.Surface | None = None
@@ -80,7 +173,8 @@ class LevelRuntime:
 
 def main() -> None:
     pygame.init()
-    runtime = _create_runtime(load_level(_level_number_from_args()))
+    current_level = _level_number_from_args()
+    runtime = _create_runtime(load_level(current_level))
     screen = pygame.display.set_mode(
         (runtime.level.bounds.width, runtime.level.bounds.height)
     )
@@ -98,6 +192,19 @@ def main() -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif (
+                event.type == pygame.KEYDOWN
+                and event.key == pygame.K_RETURN
+                and runtime.won
+                and current_level < MAX_LEVEL
+            ):
+                current_level += 1
+                runtime, screen = _load_runtime(
+                    current_level,
+                    screen,
+                    font,
+                    small_font,
+                )
 
         _handle_player_input(runtime, pygame.key.get_pressed())
         _update_runtime(runtime, dt)
@@ -105,6 +212,24 @@ def main() -> None:
         pygame.display.flip()
 
     pygame.quit()
+
+
+def _load_runtime(
+    level_number: int,
+    screen: pygame.Surface,
+    font: pygame.font.Font,
+    small_font: pygame.font.Font,
+) -> tuple[LevelRuntime, pygame.Surface]:
+    runtime = _create_runtime(load_level(level_number))
+    if screen.get_size() != (runtime.level.bounds.width, runtime.level.bounds.height):
+        screen = pygame.display.set_mode(
+            (runtime.level.bounds.width, runtime.level.bounds.height)
+        )
+    pygame.display.set_caption(runtime.level.name)
+    runtime.static_surface = _build_static_surface(screen, runtime)
+    runtime.hud_surface = _build_hud_surface(screen, runtime, font, small_font)
+    runtime.win_surface = font.render("Power Core delivered", True, GOAL_COLOR)
+    return runtime, screen
 
 
 def _create_runtime(level: Level) -> LevelRuntime:
@@ -178,7 +303,33 @@ def _create_runtime(level: Level) -> LevelRuntime:
         gates=gates,
         gate_closed=gate_closed,
         soft_bodies=soft_bodies,
+        net_bridges=_create_net_bridges(level),
         spark_emitters=[],
+    )
+
+
+def _create_net_bridges(level: Level) -> list[NetBridge]:
+    if level.id != "level-2":
+        return []
+
+    return [
+        _create_wobbly_bridge(start=(220.0, 505.0), columns=13, spacing=32.0)
+    ]
+
+
+def _create_wobbly_bridge(
+    start: tuple[float, float],
+    columns: int,
+    spacing: float,
+) -> NetBridge:
+    return NetBridge(start=Vector2(start), columns=columns, spacing=spacing)
+
+
+def _net_spring(particle_a: NetParticle, particle_b: NetParticle) -> NetSpring:
+    return NetSpring(
+        particle_a=particle_a,
+        particle_b=particle_b,
+        rest_length=particle_a.position.distance_to(particle_b.position),
     )
 
 
@@ -226,6 +377,8 @@ def _update_runtime(runtime: LevelRuntime, dt: float) -> None:
         _emit_switch_sparks(runtime)
 
     runtime.won = _body_overlaps_circle(runtime.player, runtime.level.goal.position, runtime.level.goal.radius)
+    for net_bridge in runtime.net_bridges:
+        net_bridge.update(dt, runtime.player)
     for emitter in runtime.spark_emitters:
         emitter.update(dt)
         emitter.clear_dead()
@@ -302,6 +455,8 @@ def _draw_level(
             spring_color=SOFT_BODY_SPRING,
             fill_color=SOFT_BODY_FILL,
         )
+    for net_bridge in runtime.net_bridges:
+        net_bridge.draw(surface)
     _draw_body(surface, runtime.player, PLAYER_COLOR, PLAYER_CORE_COLOR)
     for crate in runtime.crates.values():
         _draw_body(surface, crate, CRATE_COLOR, CRATE_EDGE_COLOR)
@@ -399,6 +554,7 @@ def _build_hud_surface(
     hud_surface = pygame.Surface(surface.get_size(), pygame.SRCALPHA).convert_alpha()
     title = font.render(runtime.level.name, True, TEXT_COLOR)
     controls = small_font.render("A/D or arrows move   Space/W jumps", True, MUTED_TEXT_COLOR)
+    next_level = small_font.render("After delivery, press Enter for Level 2", True, GOAL_COLOR)
     hud_surface.blit(title, (18, 16))
     _draw_wrapped_text(
         hud_surface,
@@ -409,6 +565,8 @@ def _build_hud_surface(
         MUTED_TEXT_COLOR,
     )
     hud_surface.blit(controls, (18, 92))
+    if runtime.level.id == "level-1":
+        hud_surface.blit(next_level, (18, 116))
     return hud_surface
 
 

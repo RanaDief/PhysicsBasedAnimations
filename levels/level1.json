@@ -17,7 +17,7 @@
     "par_time_seconds": 45
   },
   "player": {
-    "position": [125.0, 600.0],
+    "position": [90.0, 590.0],
     "radius": 18.0,
     "mass": 18.0,
     "restitution": 0.35,
@@ -48,7 +48,7 @@
     },
     {
       "id": "training-step",
-      "position": [310.0, 605.0],
+      "position": [260.0, 605.0],
       "size": [140.0, 28.0],
       "kind": "static"
     },
