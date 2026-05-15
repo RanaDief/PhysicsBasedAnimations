@@ -11,6 +11,7 @@ from engine import (
     AABB,
     Body,
     Bounds,
+    CollisionManifold,
     ParticleEmitter,
     SoftBody,
     World,
@@ -34,8 +35,6 @@ SOFT_BODY_FILL = (86, 194, 255)
 SOFT_BODY_PARTICLE = (202, 244, 255)
 SOFT_BODY_SPRING = (44, 112, 170)
 NET_FIXED_COLOR = (255, 95, 95)
-NET_PARTICLE_COLOR = (105, 235, 170)
-NET_SPRING_COLOR = (190, 220, 245)
 BRIDGE_ROPE_COLOR = (178, 142, 92)
 BRIDGE_PLANK_COLOR = (142, 92, 48)
 BRIDGE_PLANK_EDGE = (222, 177, 104)
@@ -56,10 +55,6 @@ PLAYER_JUMP_SPEED = 520.0
 AIR_CONTROL = 0.65
 STATIC_FRICTION = 0.18
 SPARK_GRAVITY = (0.0, 520.0)
-NET_GRAVITY = 780.0
-NET_DAMPING = 0.025
-NET_STIFFNESS = 52.0    
-NET_PLAYER_FORCE = 9000.0
 BRIDGE_LOAD_STIFFNESS = 28.0
 BRIDGE_LOAD_DAMPING = 9.5
 BRIDGE_MAX_LOAD_SAG = 24.0
@@ -79,50 +74,6 @@ class StaticBox:
     @property
     def inv_mass(self) -> float:
         return 0.0
-
-
-@dataclass(slots=True)
-class NetParticle:
-    position: Vector2
-    velocity: Vector2 = field(default_factory=Vector2)
-    is_static: bool = False
-
-    def apply_force(self, force: Vector2, dt: float) -> None:
-        if not self.is_static:
-            self.velocity += force * dt
-
-    def update(self, dt: float) -> None:
-        if self.is_static:
-            return
-        self.velocity.y += NET_GRAVITY * dt
-        self.velocity *= 1.0 - NET_DAMPING
-        self.position += self.velocity * dt
-
-
-@dataclass(slots=True)
-class NetSpring:
-    particle_a: NetParticle
-    particle_b: NetParticle
-    rest_length: float
-
-    def apply_force(self, dt: float) -> None:
-        offset = self.particle_b.position - self.particle_a.position
-        distance = offset.length()
-        if distance == 0.0:
-            return
-
-        force = offset.normalize() * ((distance - self.rest_length) * NET_STIFFNESS)
-        self.particle_a.apply_force(force, dt)
-        self.particle_b.apply_force(-force, dt)
-
-    def draw(self, surface: pygame.Surface) -> None:
-        pygame.draw.line(
-            surface,
-            NET_SPRING_COLOR,
-            self.particle_a.position,
-            self.particle_b.position,
-            2,
-        )
 
 
 @dataclass(slots=True)
@@ -239,7 +190,8 @@ class ArmState:
     @property
     def claw(self) -> Vector2:
         angle = self.shoulder_angle + self.elbow_angle
-        return self.joint + Vector2(math.cos(angle), math.sin(angle)) * self.lower_length
+        direction = Vector2(math.cos(angle), math.sin(angle))
+        return self.joint + direction * self.lower_length
 
 
 @dataclass(slots=True)
@@ -274,9 +226,7 @@ def main() -> None:
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, 28)
     small_font = pygame.font.Font(None, 22)
-    runtime.static_surface = _build_static_surface(screen, runtime)
-    runtime.hud_surface = _build_hud_surface(screen, runtime, font, small_font)
-    runtime.win_surface = font.render("Power Core delivered", True, GOAL_COLOR)
+    _refresh_runtime_surfaces(runtime, screen, font, small_font)
 
     running = True
     while running:
@@ -313,79 +263,46 @@ def _load_runtime(
     small_font: pygame.font.Font,
 ) -> tuple[LevelRuntime, pygame.Surface]:
     runtime = _create_runtime(load_level(level_number))
-    if screen.get_size() != (runtime.level.bounds.width, runtime.level.bounds.height):
-        screen = pygame.display.set_mode(
-            (runtime.level.bounds.width, runtime.level.bounds.height)
-        )
+    screen = _resize_screen_for_level(screen, runtime.level)
     pygame.display.set_caption(runtime.level.name)
-    runtime.static_surface = _build_static_surface(screen, runtime)
-    runtime.hud_surface = _build_hud_surface(screen, runtime, font, small_font)
-    runtime.win_surface = font.render("Power Core delivered", True, GOAL_COLOR)
+    _refresh_runtime_surfaces(runtime, screen, font, small_font)
     return runtime, screen
 
 
+def _resize_screen_for_level(
+    screen: pygame.Surface,
+    level: Level,
+) -> pygame.Surface:
+    level_size = (level.bounds.width, level.bounds.height)
+    if screen.get_size() == level_size:
+        return screen
+    return pygame.display.set_mode(level_size)
+
+
+def _refresh_runtime_surfaces(
+    runtime: LevelRuntime,
+    screen: pygame.Surface,
+    font: pygame.font.Font,
+    small_font: pygame.font.Font,
+) -> None:
+    runtime.static_surface = _build_static_surface(screen, runtime)
+    runtime.hud_surface = _build_hud_surface(screen, runtime, font, small_font)
+    runtime.win_surface = font.render("Power Core delivered", True, GOAL_COLOR)
+
+
 def _create_runtime(level: Level) -> LevelRuntime:
-    player_spec = level.player
-    player = Body(
-        player_spec.position,
-        radius=player_spec.radius,
-        mass=player_spec.mass,
-        restitution=player_spec.restitution,
-        friction=player_spec.friction,
-    )
-    crates = {
-        spec.id: Body(
-            spec.position,
-            radius=spec.radius,
-            mass=spec.mass,
-            restitution=spec.restitution,
-            friction=spec.friction,
-        )
-        for spec in level.rigid_bodies
-    }
-    platforms = [
-        StaticBox(position=Vector2(spec.position), half_size=Vector2(spec.size) * 0.5)
-        for spec in level.platforms
-    ]
-    gates = {
-        spec.id: StaticBox(
-            position=Vector2(spec.position),
-            half_size=Vector2(spec.size) * 0.5,
-            friction=0.0,
-        )
-        for spec in level.gates
-    }
+    player = _create_player(level)
+    crates = _create_crates(level)
+    platforms = _create_platforms(level)
+    gates = _create_gates(level)
     gate_closed = {spec.id: spec.closed for spec in level.gates}
-    world = World(
-        bounds=Bounds(0.0, 0.0, level.bounds.width, level.bounds.height),
-        gravity=level.gravity,
-        floor_friction=420.0,
-        collision_iterations=3,
-        positional_correction=0.85,
-    )
+    world = _create_world(level)
     world.add_body(player)
     world.add_bodies(list(crates.values()))
-    soft_bodies = [
-        SoftBody(
-            center=spec.center,
-            particle_count=spec.particle_count,
-            radius=spec.radius,
-            particle_radius=spec.particle_radius,
-            particle_mass=spec.particle_mass,
-            spring_stiffness=spec.spring_stiffness,
-            spring_damping=spec.spring_damping,
-            pressure=spec.pressure,
-            restitution=spec.restitution,
-        )
-        for spec in level.soft_bodies
-    ]
-    for soft_body, spec in zip(soft_bodies, level.soft_bodies):
-        world.add_soft_body(
-            soft_body,
-            gravity=spec.gravity,
-            bounds=Bounds(0.0, 0.0, level.bounds.width, level.bounds.height),
-            time_step=spec.time_step,
-        )
+
+    soft_bodies = _create_soft_bodies(level)
+    _add_soft_bodies_to_world(world, level, soft_bodies)
+
     return LevelRuntime(
         level=level,
         world=world,
@@ -399,6 +316,90 @@ def _create_runtime(level: Level) -> LevelRuntime:
         arm=ArmState() if level.id == "level-3" else None,
         spark_emitters=[],
     )
+
+
+def _create_player(level: Level) -> Body:
+    spec = level.player
+    return Body(
+        spec.position,
+        radius=spec.radius,
+        mass=spec.mass,
+        restitution=spec.restitution,
+        friction=spec.friction,
+    )
+
+
+def _create_crates(level: Level) -> dict[str, Body]:
+    return {
+        spec.id: Body(
+            spec.position,
+            radius=spec.radius,
+            mass=spec.mass,
+            restitution=spec.restitution,
+            friction=spec.friction,
+        )
+        for spec in level.rigid_bodies
+    }
+
+
+def _create_platforms(level: Level) -> list[StaticBox]:
+    return [
+        StaticBox(position=Vector2(spec.position), half_size=Vector2(spec.size) * 0.5)
+        for spec in level.platforms
+    ]
+
+
+def _create_gates(level: Level) -> dict[str, StaticBox]:
+    return {
+        spec.id: StaticBox(
+            position=Vector2(spec.position),
+            half_size=Vector2(spec.size) * 0.5,
+            friction=0.0,
+        )
+        for spec in level.gates
+    }
+
+
+def _create_world(level: Level) -> World:
+    return World(
+        bounds=Bounds(0.0, 0.0, level.bounds.width, level.bounds.height),
+        gravity=level.gravity,
+        floor_friction=420.0,
+        collision_iterations=3,
+        positional_correction=0.85,
+    )
+
+
+def _create_soft_bodies(level: Level) -> list[SoftBody]:
+    return [
+        SoftBody(
+            center=spec.center,
+            particle_count=spec.particle_count,
+            radius=spec.radius,
+            particle_radius=spec.particle_radius,
+            particle_mass=spec.particle_mass,
+            spring_stiffness=spec.spring_stiffness,
+            spring_damping=spec.spring_damping,
+            pressure=spec.pressure,
+            restitution=spec.restitution,
+        )
+        for spec in level.soft_bodies
+    ]
+
+
+def _add_soft_bodies_to_world(
+    world: World,
+    level: Level,
+    soft_bodies: list[SoftBody],
+) -> None:
+    level_bounds = Bounds(0.0, 0.0, level.bounds.width, level.bounds.height)
+    for soft_body, spec in zip(soft_bodies, level.soft_bodies):
+        world.add_soft_body(
+            soft_body,
+            gravity=spec.gravity,
+            bounds=level_bounds,
+            time_step=spec.time_step,
+        )
 
 
 def _create_net_bridges(level: Level) -> list[NetBridge]:
@@ -418,15 +419,10 @@ def _create_wobbly_bridge(
     return NetBridge(start=Vector2(start), columns=columns, spacing=spacing)
 
 
-def _net_spring(particle_a: NetParticle, particle_b: NetParticle) -> NetSpring:
-    return NetSpring(
-        particle_a=particle_a,
-        particle_b=particle_b,
-        rest_length=particle_a.position.distance_to(particle_b.position),
-    )
-
-
-def _handle_player_input(runtime: LevelRuntime, keys: pygame.key.ScancodeWrapper) -> None:
+def _handle_player_input(
+    runtime: LevelRuntime,
+    keys: pygame.key.ScancodeWrapper,
+) -> None:
     direction = 0.0
     if keys[pygame.K_LEFT] or keys[pygame.K_a]:
         direction -= 1.0
@@ -443,7 +439,8 @@ def _handle_player_input(runtime: LevelRuntime, keys: pygame.key.ScancodeWrapper
         PLAYER_MAX_SPEED,
     )
 
-    if (keys[pygame.K_SPACE] or keys[pygame.K_UP] or keys[pygame.K_w]) and runtime.grounded:
+    wants_jump = keys[pygame.K_SPACE] or keys[pygame.K_UP] or keys[pygame.K_w]
+    if wants_jump and runtime.grounded:
         runtime.player.velocity.y = -PLAYER_JUMP_SPEED
         runtime.grounded = False
 
@@ -483,31 +480,64 @@ def _pull_nearby_crate(runtime: LevelRuntime) -> None:
 
 
 def _update_runtime(runtime: LevelRuntime, dt: float) -> None:
+    _update_net_bridges(runtime, dt)
+    runtime.world.update(dt)
+    _resolve_runtime_collisions(runtime)
+    _update_switches(runtime)
+    _update_goal_state(runtime)
+    _update_spark_emitters(runtime, dt)
+
+
+def _update_net_bridges(runtime: LevelRuntime, dt: float) -> None:
     for net_bridge in runtime.net_bridges:
         net_bridge.update(dt, runtime.player)
     _sync_bridge_supports(runtime)
 
-    runtime.world.update(dt)
-    runtime.grounded = False
 
-    active_gate_boxes = [
+def _resolve_runtime_collisions(runtime: LevelRuntime) -> None:
+    runtime.grounded = False
+    collision_boxes = [*runtime.platforms, *_active_gate_boxes(runtime)]
+
+    for body in [runtime.player, *runtime.crates.values()]:
+        for box in collision_boxes:
+            collision = _resolve_level_box_collision(body, box)
+            if body is runtime.player and _is_ground_collision(collision):
+                runtime.grounded = True
+                _stop_small_vertical_motion(runtime.player)
+
+
+def _active_gate_boxes(runtime: LevelRuntime) -> list[StaticBox]:
+    return [
         gate for gate_id, gate in runtime.gates.items() if runtime.gate_closed[gate_id]
     ]
-    for body in [runtime.player, *runtime.crates.values()]:
-        for box in [*runtime.platforms, *active_gate_boxes]:
-            collision = _resolve_level_box_collision(body, box)
-            if body is runtime.player and collision is not None and _is_floor_contact(collision.normal):
-                runtime.grounded = True
-                if abs(runtime.player.velocity.y) < 10.0:   
-                    runtime.player.velocity.y = 0.0
 
+
+def _is_ground_collision(collision: CollisionManifold | None) -> bool:
+    return collision is not None and _is_floor_contact(collision.normal)
+
+
+def _stop_small_vertical_motion(body: Body) -> None:
+    if abs(body.velocity.y) < 10.0:
+        body.velocity.y = 0.0
+
+
+def _update_switches(runtime: LevelRuntime) -> None:
     if not runtime.switch_active and _switch_is_pressed(runtime):
         runtime.switch_active = True
         for switch in runtime.level.switches:
             runtime.gate_closed[switch.activates] = False
         _emit_switch_sparks(runtime)
 
-    runtime.won = _body_overlaps_circle(runtime.player, runtime.level.goal.position, runtime.level.goal.radius)
+
+def _update_goal_state(runtime: LevelRuntime) -> None:
+    runtime.won = _body_overlaps_circle(
+        runtime.player,
+        runtime.level.goal.position,
+        runtime.level.goal.radius,
+    )
+
+
+def _update_spark_emitters(runtime: LevelRuntime, dt: float) -> None:
     for emitter in runtime.spark_emitters:
         emitter.update(dt)
         emitter.clear_dead()
@@ -531,13 +561,20 @@ def _switch_is_pressed(runtime: LevelRuntime) -> bool:
         body = runtime.crates.get(switch.required_body or "")
         if body is None:
             continue
-        if detect_circle_aabb_collision(body, AABB.from_center(switch.position, switch.size)):
+        switch_box = AABB.from_center(switch.position, switch.size)
+        if detect_circle_aabb_collision(body, switch_box):
             return True
     return False
 
 
-def _resolve_level_box_collision(body: Body, box: StaticBox):
-    collision = detect_circle_aabb_collision(body, AABB.from_center(box.position, box.half_size * 2.0))
+def _resolve_level_box_collision(
+    body: Body,
+    box: StaticBox,
+) -> CollisionManifold | None:
+    collision = detect_circle_aabb_collision(
+        body,
+        AABB.from_center(box.position, box.half_size * 2.0),
+    )
     if collision is None:
         return None
 
@@ -715,7 +752,11 @@ def _build_hud_surface(
 ) -> pygame.Surface:
     hud_surface = pygame.Surface(surface.get_size(), pygame.SRCALPHA).convert_alpha()
     title = font.render(runtime.level.name, True, TEXT_COLOR)
-    controls = small_font.render("A/D or arrows move   Space/W jumps", True, MUTED_TEXT_COLOR)
+    controls = small_font.render(
+        "A/D or arrows move   Space/W jumps",
+        True,
+        MUTED_TEXT_COLOR,
+    )
     hud_surface.blit(title, (18, 16))
     _draw_wrapped_text(
         hud_surface,
@@ -740,7 +781,8 @@ def _build_hud_surface(
             True,
             GOAL_COLOR,
         )
-        hud_surface.blit(next_level, (18, 140 if runtime.level.id == "level-3" else 116))
+        y = 140 if runtime.level.id == "level-3" else 116
+        hud_surface.blit(next_level, (18, y))
     return hud_surface
 
 
@@ -771,7 +813,8 @@ def _body_overlaps_circle(
     position: tuple[float, float],
     radius: float,
 ) -> bool:
-    return body.position.distance_squared_to(Vector2(position)) <= (body.radius + radius) ** 2
+    overlap_distance = body.radius + radius
+    return body.position.distance_squared_to(Vector2(position)) <= overlap_distance**2
 
 
 def _box_rect(box: StaticBox) -> pygame.Rect:
